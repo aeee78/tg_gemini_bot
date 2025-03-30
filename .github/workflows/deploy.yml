@@ -1,0 +1,33 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.8.1
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: Copy project files to server
+        run: |
+          rsync -avz --delete -e "ssh -o StrictHostKeyChecking=no" . root@${{ secrets.SERVER_IP }}:/home/tg_gemini_bot
+
+      - name: Deploy on server
+        run: |
+          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << 'EOF'
+            cd /home/tg_gemini_bot
+            # Активируем виртуальное окружение и устанавливаем зависимости
+            source venv/bin/activate
+            pip install -r requirements.txt
+            # Перезапускаем systemd-сервис
+            systemctl restart tg_gemini_bot.service
+          EOF
