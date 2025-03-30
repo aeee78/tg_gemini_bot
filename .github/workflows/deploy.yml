@@ -28,9 +28,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << 'EOF'
             cd /home/tg_gemini_bot
-            # Активируем виртуальное окружение и устанавливаем зависимости
             source venv/bin/activate
             pip install -r requirements.txt
-            # Перезапускаем systemd-сервис
             systemctl restart tg_gemini_bot.service
           EOF
