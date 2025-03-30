@@ -19,7 +19,10 @@ jobs:
 
       - name: Copy project files to server
         run: |
-          rsync -avz --delete -e "ssh -o StrictHostKeyChecking=no" . root@${{ secrets.SERVER_IP }}:/home/tg_gemini_bot
+          rsync -avz --delete \
+            --exclude 'venv/' \
+            --exclude '.env' \
+            -e "ssh -o StrictHostKeyChecking=no" . root@${{ secrets.SERVER_IP }}:/home/tg_gemini_bot
 
       - name: Deploy on server
         run: |
