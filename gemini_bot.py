@@ -56,7 +56,8 @@ def get_model_selection_keyboard():
     for model_name in AVAILABLE_MODELS:
         keyboard.add(
             types.InlineKeyboardButton(
-                text=model_name, callback_data=f"model_{model_name}",
+                text=model_name,
+                callback_data=f"model_{model_name}",
             ),
         )
     return keyboard
@@ -65,17 +66,14 @@ def get_model_selection_keyboard():
 def is_image_generation_request(text):
     """Проверяет, является ли запрос запросом на генерацию изображения."""
     text_lower = text.lower()
-    return any(
-        text_lower.startswith(prefix) for prefix in IMAGE_COMMAND_PREFIXES
-    )
+    return any(text_lower.startswith(prefix) for prefix in IMAGE_COMMAND_PREFIXES)
 
 
 def download_telegram_image(file_id):
     """Загружает изображение из Telegram."""
     file_info = bot.get_file(file_id)
     file_url = (
-        f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/"
-        f"{file_info.file_path}"
+        f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/" f"{file_info.file_path}"
     )
     response = requests.get(file_url)
     return io.BytesIO(response.content)
@@ -234,15 +232,13 @@ def get_response_as_file(message):
 
     if user_last_responses.get(user_id):
         words = user_last_responses[user_id].split()
-        filename = (
-            "_".join(words[:3]) + ".md" if len(words) > 0 else "response.md"
-        )
-        filename = (
-            filename.replace("/", "_").replace("\\", "_").replace(":", "_")
-        )
+        filename = "_".join(words[:3]) + ".md" if len(words) > 0 else "response.md"
+        filename = filename.replace("/", "_").replace("\\", "_").replace(":", "_")
 
         send_text_as_file(
-            message.chat.id, user_last_responses[user_id], filename,
+            message.chat.id,
+            user_last_responses[user_id],
+            filename,
         )
     else:
         bot.send_message(
@@ -312,9 +308,7 @@ def handle_photo(message):
 
         img = Image.open(image_stream)
 
-        caption = (
-            message.caption if message.caption else "What's in this image?"
-        )
+        caption = message.caption if message.caption else "What's in this image?"
 
         response = image_model.generate_content([caption, img])
         response_text = response.text
