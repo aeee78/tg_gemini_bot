@@ -9,7 +9,7 @@ pre-commit
 .pre-commit-config.yaml
 # C extensions
 *.so
-
+test.py
 # Distribution / packaging
 .Python
 build/

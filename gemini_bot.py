@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from PIL import Image
 from telebot import types
 
+from utils import markdown_to_text
+
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -20,7 +22,6 @@ AVAILABLE_MODELS = [
     "gemini-2.0-flash-thinking-exp-01-21",
     "gemini-2.5-pro-exp-03-25",
     "gemini-2.0-flash",
-    "gemini-2.0-flash-001",
     "gemini-2.0-flash-exp-image-generation",
 ]
 
@@ -46,7 +47,6 @@ def get_main_keyboard():
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Новый чат"))
     keyboard.add(types.KeyboardButton("Выбрать модель"))
-    keyboard.add(types.KeyboardButton("Получить ответ как файл"))
     return keyboard
 
 
@@ -73,7 +73,7 @@ def download_telegram_image(file_id):
     """Загружает изображение из Telegram."""
     file_info = bot.get_file(file_id)
     file_url = (
-        f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/" f"{file_info.file_path}"
+        f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info.file_path}"
     )
     response = requests.get(file_url)
     return io.BytesIO(response.content)
@@ -112,8 +112,9 @@ def split_long_message(text, max_length=MAX_MESSAGE_LENGTH):
     return parts
 
 
-def send_text_as_file(chat_id, text, filename="response.md"):
+def send_text_as_file(chat_id, text, filename="response.txt"):
     """Отправляет ответ в виде файла."""
+    text = markdown_to_text(text)
     file_obj = io.BytesIO(text.encode("utf-8"))
     bot.send_document(
         chat_id,
@@ -223,28 +224,38 @@ def select_model(message):
     )
 
 
-@bot.message_handler(
-    func=lambda message: message.text == "Получить ответ как файл",
-)
-def get_response_as_file(message):
-    """Обрабатывает нажатие кнопки "Получить ответ как файл"."""
-    user_id = message.from_user.id
+def get_file_download_keyboard(user_id):
+    """Создает инлайн клавиатуру для скачивания файла."""
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(
+        types.InlineKeyboardButton(
+            text="Получить в виде файла",
+            callback_data=f"get_file_{user_id}",
+        ),
+    )
+    return keyboard
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("get_file_"))
+def handle_get_file(call):
+    """Обрабатывает нажатие инлайн кнопки "Получить в виде файла"."""
+    user_id = int(call.data.split("_")[2])
 
     if user_last_responses.get(user_id):
         words = user_last_responses[user_id].split()
-        filename = "_".join(words[:3]) + ".md" if len(words) > 0 else "response.md"
+        filename = "_".join(words[:3]) + ".txt" if len(words) > 0 else "response.txt"
         filename = filename.replace("/", "_").replace("\\", "_").replace(":", "_")
 
         send_text_as_file(
-            message.chat.id,
+            call.message.chat.id,
             user_last_responses[user_id],
             filename,
         )
+        bot.answer_callback_query(call.id, text="Файл отправлен!")
     else:
-        bot.send_message(
-            message.chat.id,
-            "У меня нет сохраненных ответов для отправки в виде файла.",
-            reply_markup=get_main_keyboard(),
+        bot.answer_callback_query(
+            call.id,
+            text="У меня нет сохраненных ответов для отправки в виде файла.",
         )
 
 
@@ -293,7 +304,7 @@ def handle_photo(message):
     user_id = message.from_user.id
 
     if user_id not in user_models:
-        user_models[user_id] = "gemini-2.0-pro-exp-02-05"
+        user_models[user_id] = "gemini-2.5-pro-exp-03-25"
 
     file_id = message.photo[-1].file_id
 
@@ -303,7 +314,7 @@ def handle_photo(message):
         image_stream = download_telegram_image(file_id)
 
         image_model = genai.GenerativeModel(
-            model_name="gemini-2.0-pro-exp-02-05",
+            model_name="gemini-2.5-pro-exp-03-25",
         )
 
         img = Image.open(image_stream)
@@ -382,6 +393,7 @@ def handle_message(message):
         else:
             response = user_chats[user_id].send_message(message.text)
             response_text = response.text
+            response_text = markdown_to_text(response_text)
 
             user_last_responses[user_id] = response_text
 
@@ -396,9 +408,8 @@ def handle_message(message):
             if len(message_parts) > 1:
                 bot.send_message(
                     message.chat.id,
-                    "Ответ был разбит на несколько сообщений. Вы можете "
-                    "получить полный ответ в виде файла.",
-                    reply_markup=get_main_keyboard(),
+                    "Ответ был разбит на несколько сообщений.",
+                    reply_markup=get_file_download_keyboard(user_id),
                 )
     except Exception as e:
         bot.reply_to(
