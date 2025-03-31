@@ -1,6 +1,4 @@
-import base64
 import io
-import os
 
 import google.generativeai as genai
 import requests
@@ -9,21 +7,18 @@ from dotenv import load_dotenv
 from PIL import Image
 from telebot import types
 
-from utils import markdown_to_text
+from constants import (
+    AVAILABLE_MODELS,
+    GEMINI_API_KEY,
+    GREETING_MESSAGE_TEMPLATE,
+    TELEGRAM_TOKEN,
+)
+from image_generation import generate_image_direct, is_image_generation_request
+from utils import markdown_to_text, split_long_message
+
 
 load_dotenv()
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-MAX_MESSAGE_LENGTH = 4000
-
-AVAILABLE_MODELS = [
-    "gemini-2.0-flash-thinking-exp-01-21",
-    "gemini-2.5-pro-exp-03-25",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-exp-image-generation",
-]
 
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -33,20 +28,13 @@ user_chats = {}
 user_models = {}
 user_last_responses = {}
 
-IMAGE_COMMAND_PREFIXES = [
-    "нарисуй",
-    "сгенерируй изображение",
-    "создай изображение",
-    "draw",
-    "generate image",
-]
-
 
 def get_main_keyboard():
-    """Создает основную клавиатуру    ."""
+    """Создает основную клавиатуру."""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Новый чат"))
     keyboard.add(types.KeyboardButton("Выбрать модель"))
+    keyboard.add(types.KeyboardButton("Получить .MD"))
     return keyboard
 
 
@@ -63,12 +51,6 @@ def get_model_selection_keyboard():
     return keyboard
 
 
-def is_image_generation_request(text):
-    """Проверяет, является ли запрос запросом на генерацию изображения."""
-    text_lower = text.lower()
-    return any(text_lower.startswith(prefix) for prefix in IMAGE_COMMAND_PREFIXES)
-
-
 def download_telegram_image(file_id):
     """Загружает изображение из Telegram."""
     file_info = bot.get_file(file_id)
@@ -79,42 +61,8 @@ def download_telegram_image(file_id):
     return io.BytesIO(response.content)
 
 
-def split_long_message(text, max_length=MAX_MESSAGE_LENGTH):
-    """Разбивает длинный текст на части."""
-    if len(text) <= max_length:
-        return [text]
-
-    parts = []
-    current_part = ""
-
-    paragraphs = text.split("\n\n")
-
-    for paragraph in paragraphs:
-        if len(paragraph) > max_length:
-            sentences = paragraph.split(". ")
-            for sentence in sentences:
-                if len(current_part + sentence + ". ") <= max_length:
-                    current_part += sentence + ". "
-                else:
-                    if current_part:
-                        parts.append(current_part)
-                    current_part = sentence + ". "
-        elif len(current_part + paragraph + "\n\n") <= max_length:
-            current_part += paragraph + "\n\n"
-        else:
-            if current_part:
-                parts.append(current_part)
-            current_part = paragraph + "\n\n"
-
-    if current_part:
-        parts.append(current_part)
-
-    return parts
-
-
 def send_text_as_file(chat_id, text, filename="response.txt"):
     """Отправляет ответ в виде файла."""
-    text = markdown_to_text(text)
     file_obj = io.BytesIO(text.encode("utf-8"))
     bot.send_document(
         chat_id,
@@ -124,49 +72,6 @@ def send_text_as_file(chat_id, text, filename="response.txt"):
     )
 
 
-def generate_image_direct(prompt):
-    """Генерирует изображение через API."""
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-2.0-flash-exp-image-generation:generateContent"
-    )
-    headers = {
-        "Content-Type": "application/json",
-        "x-goog-api-key": GEMINI_API_KEY,
-    }
-    data = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generation_config": {
-            "temperature": 1.0,
-            "topP": 0.95,
-            "topK": 64,
-            "response_modalities": ["Text", "Image"],
-        },
-    }
-
-    response = requests.post(url, headers=headers, json=data)
-    if response.status_code == 200:
-        response_json = response.json()
-        candidates = response_json.get("candidates", [])
-        if candidates and len(candidates) > 0:
-            parts = candidates[0].get("content", {}).get("parts", [])
-            for part in parts:
-                if "inlineData" in part:
-                    image_data = part["inlineData"].get("data")
-                    if image_data:
-                        image_bytes = base64.b64decode(image_data)
-                        return io.BytesIO(image_bytes)
-
-    error_info = f"Status code: {response.status_code}"
-    try:
-        error_info += f", Response: {response.json()}"
-    except Exception:
-        error_info += f", Response: {response.text}"
-
-    print(f"Debug - Image generation error: {error_info}")
-    return None
-
-
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
     """Обрабатывает команду /start."""
@@ -174,21 +79,11 @@ def send_welcome(message):
     user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
     model = genai.GenerativeModel(model_name=user_models[user_id])
     user_chats[user_id] = model.start_chat(history=[])
+    greeting_text = GREETING_MESSAGE_TEMPLATE.format(model_name=user_models[user_id])
 
     bot.send_message(
         message.chat.id,
-        f"Привет! Я бот на основе Gemini API.\n\n"
-        f"Текущая модель: {user_models[user_id]}\n\n"
-        f"Напишите мне что-нибудь или используйте кнопки для "
-        f"управления.\n\n"
-        f"Для генерации изображений используйте модель "
-        f"'gemini-2.0-flash-exp-image-generation' "
-        f"и начните сообщение со слов 'нарисуй' или "
-        f"'сгенерируй изображение'.\n\n"
-        f"Вы также можете отправить мне изображение, и я опишу, "
-        f"что на нём.\n\n"
-        f"Если ответ слишком длинный, вы можете получить его в "
-        f"виде текстового файла.",
+        greeting_text,
         reply_markup=get_main_keyboard(),
     )
 
@@ -212,6 +107,31 @@ def new_chat(message):
         f"Текущая модель: {user_models[user_id]}",
         reply_markup=get_main_keyboard(),
     )
+
+
+@bot.message_handler(
+    func=lambda message: message.text == "Получить .MD",
+)
+def get_response_as_md(message):
+    """Обрабатывает нажатие кнопки "Получить .MD"."""
+    user_id = message.from_user.id
+
+    if user_last_responses.get(user_id):
+        words = user_last_responses[user_id].split()
+        filename = "_".join(words[:3]) + ".md" if len(words) > 0 else "response.md"
+        filename = filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+
+        send_text_as_file(
+            message.chat.id,
+            user_last_responses[user_id],
+            filename,
+        )
+    else:
+        bot.send_message(
+            message.chat.id,
+            "У меня нет сохраненных ответов для отправки в виде файла.",
+            reply_markup=get_main_keyboard(),
+        )
 
 
 @bot.message_handler(func=lambda message: message.text == "Выбрать модель")
@@ -242,16 +162,21 @@ def handle_get_file(call):
     user_id = int(call.data.split("_")[2])
 
     if user_last_responses.get(user_id):
-        words = user_last_responses[user_id].split()
+
+        raw_response = user_last_responses[user_id]
+
+        words = raw_response.split()
         filename = "_".join(words[:3]) + ".txt" if len(words) > 0 else "response.txt"
         filename = filename.replace("/", "_").replace("\\", "_").replace(":", "_")
 
+        plain_text_response = markdown_to_text(raw_response)
+
         send_text_as_file(
             call.message.chat.id,
-            user_last_responses[user_id],
+            plain_text_response,
             filename,
         )
-        bot.answer_callback_query(call.id, text="Файл отправлен!")
+        bot.answer_callback_query(call.id, text="Текстовый файл отправлен!")
     else:
         bot.answer_callback_query(
             call.id,
@@ -285,7 +210,7 @@ def handle_model_selection(call):
     if selected_model == "gemini-2.0-flash-exp-image-generation":
         bot.send_message(
             call.message.chat.id,
-            "Вы выбрали модель с поддержкой генерации изображений.\n\n"
+            "Выбрана модель с поддержкой генерации изображений.\n\n"
             "Для создания изображения начните сообщение со слов "
             "'нарисуй' или 'сгенерируй изображение'.",
             reply_markup=get_main_keyboard(),
@@ -322,11 +247,12 @@ def handle_photo(message):
         caption = message.caption if message.caption else "What's in this image?"
 
         response = image_model.generate_content([caption, img])
-        response_text = response.text
+        raw_response_text = response.text
 
-        user_last_responses[user_id] = response_text
+        user_last_responses[user_id] = raw_response_text
 
-        message_parts = split_long_message(response_text)
+        plain_response_text = markdown_to_text(raw_response_text)
+        message_parts = split_long_message(plain_response_text)
 
         for i, part in enumerate(message_parts):
             if i == 0:
@@ -339,7 +265,7 @@ def handle_photo(message):
                 message.chat.id,
                 "Ответ был разбит на несколько сообщений. Вы можете "
                 "получить полный ответ в виде файла.",
-                reply_markup=get_main_keyboard(),
+                reply_markup=get_file_download_keyboard(user_id),
             )
 
     except Exception as e:
@@ -392,17 +318,17 @@ def handle_message(message):
                 )
         else:
             response = user_chats[user_id].send_message(message.text)
-            response_text = response.text
-            response_text = markdown_to_text(response_text)
+            raw_response_text = response.text
+            user_last_responses[user_id] = raw_response_text
 
-            user_last_responses[user_id] = response_text
-
-            message_parts = split_long_message(response_text)
-
+            plain_response_text = markdown_to_text(raw_response_text)
+            message_parts = split_long_message(plain_response_text)
             for i, part in enumerate(message_parts):
                 if i == 0:
+
                     bot.reply_to(message, part)
                 else:
+
                     bot.send_message(message.chat.id, part)
 
             if len(message_parts) > 1:
