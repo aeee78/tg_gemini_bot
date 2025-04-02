@@ -13,7 +13,7 @@ from constants import (
     GREETING_MESSAGE_TEMPLATE,
     TELEGRAM_TOKEN,
 )
-from image_generation import generate_image_direct, is_image_generation_request
+from image_generation import generate_image_direct
 from utils import markdown_to_text, split_long_message
 
 
@@ -207,48 +207,55 @@ def handle_model_selection(call):
         ),
     )
 
-    if selected_model == "gemini-2.0-flash-exp-image-generation":
-        bot.send_message(
-            call.message.chat.id,
-            "Выбрана модель с поддержкой генерации изображений.\n\n"
-            "Для создания изображения начните сообщение со слов "
-            "'нарисуй' или 'сгенерируй изображение'.",
-            reply_markup=get_main_keyboard(),
-        )
-    else:
-        bot.send_message(
-            call.message.chat.id,
-            "Можете начать новый диалог.",
-            reply_markup=get_main_keyboard(),
-        )
+    bot.send_message(
+        call.message.chat.id,
+        "Можете начать новый диалог.",
+        reply_markup=get_main_keyboard(),
+    )
 
 
 @bot.message_handler(content_types=["photo"])
 def handle_photo(message):
-    """Обрабатывает сообщения с фотографиями."""
+    """Обрабатывает сообщения с фотографиями и сохраняет контекст,
+    предполагая, что текущая модель мультимодальна."""
     user_id = message.from_user.id
+    chat_id = message.chat.id
 
     if user_id not in user_models:
-        user_models[user_id] = "gemini-2.5-pro-exp-03-25"
+        user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
+        bot.send_message(
+            chat_id,
+            "Похоже, мы не общались раньше. Начинаю новый чат "
+            f"с моделью: {user_models[user_id]}.",
+            reply_markup=get_main_keyboard(),
+        )
 
+    if user_id not in user_chats:
+        try:
+            model = genai.GenerativeModel(model_name=user_models[user_id])
+            user_chats[user_id] = model.start_chat(history=[])
+            user_last_responses[user_id] = None
+        except Exception as e:
+            bot.reply_to(
+                message,
+                f"Не удалось инициализировать чат с моделью {user_models.get(user_id, 'неизвестно')}: {e!s}",
+                reply_markup=get_main_keyboard(),
+            )
+            return
     file_id = message.photo[-1].file_id
-
-    bot.send_chat_action(message.chat.id, "typing")
+    bot.send_chat_action(chat_id, "typing")
 
     try:
         image_stream = download_telegram_image(file_id)
-
-        image_model = genai.GenerativeModel(
-            model_name="gemini-2.5-pro-exp-03-25",
-        )
-
         img = Image.open(image_stream)
 
-        caption = message.caption if message.caption else "What's in this image?"
+        caption = message.caption if message.caption else "Опиши это изображение."
 
-        response = image_model.generate_content([caption, img])
+        chat_session = user_chats[user_id]
+
+        response = chat_session.send_message([caption, img])
+
         raw_response_text = response.text
-
         user_last_responses[user_id] = raw_response_text
 
         plain_response_text = markdown_to_text(raw_response_text)
@@ -258,11 +265,11 @@ def handle_photo(message):
             if i == 0:
                 bot.reply_to(message, part)
             else:
-                bot.send_message(message.chat.id, part)
+                bot.send_message(chat_id, part)
 
         if len(message_parts) > 1:
             bot.send_message(
-                message.chat.id,
+                chat_id,
                 "Ответ был разбит на несколько сообщений. Вы можете "
                 "получить полный ответ в виде файла.",
                 reply_markup=get_file_download_keyboard(user_id),
@@ -271,9 +278,64 @@ def handle_photo(message):
     except Exception as e:
         bot.reply_to(
             message,
-            f"Произошла ошибка при обработке изображения: {e!s}\n\n"
-            f"Убедитесь, что выбрана модель с поддержкой "
-            f"мультимодальности.",
+            f"Произошла ошибка при обработке изображения с текущей моделью ({user_models.get(user_id, 'неизвестно')}): {e!s}\n\n"
+            "Возможно, стоит попробовать начать новый чат.",
+            reply_markup=get_main_keyboard(),
+        )
+
+
+@bot.message_handler(commands=["generate"])
+def handle_generate_command(message):
+    """Обрабатывает команду /generate для создания изображений."""
+    try:
+
+        prompt = message.text.split("/generate", 1)[1].strip()
+
+        if not prompt:
+            bot.reply_to(
+                message,
+                "Пожалуйста, укажите запрос после команды /generate.\n"
+                "Например: `/generate красивый рыжий кот`",
+                parse_mode="Markdown",
+            )
+            return
+
+        user_id = message.from_user.id
+        chat_id = message.chat.id
+
+        bot.send_chat_action(chat_id, "upload_photo")
+        bot.reply_to(message, f'Генерирую изображение по запросу: "{prompt}"...')
+
+        image_stream = generate_image_direct(prompt)
+
+        if image_stream:
+            bot.send_photo(
+                chat_id,
+                image_stream,
+                caption=f"Изображение по запросу: {prompt}",
+                reply_to_message_id=message.message_id,
+            )
+        else:
+            bot.reply_to(
+                message,
+                "Не удалось сгенерировать изображение. Попробуйте "
+                "изменить запрос или проверьте настройки API.",
+                reply_markup=get_main_keyboard(),
+            )
+
+    except IndexError:
+
+        bot.reply_to(
+            message,
+            "Пожалуйста, укажите запрос после команды /generate.\n"
+            "Например: `/generate красивый рыжий кот`",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        print(f"Error during image generation command: {e}")
+        bot.reply_to(
+            message,
+            f"Произошла ошибка при генерации изображения: {e!s}",
             reply_markup=get_main_keyboard(),
         )
 
@@ -293,50 +355,28 @@ def handle_message(message):
     bot.send_chat_action(message.chat.id, "typing")
 
     try:
-        current_model = user_models[user_id]
-        if (
-            current_model == "gemini-2.0-flash-exp-image-generation"
-            and is_image_generation_request(message.text)
-        ):
-            bot.send_chat_action(message.chat.id, "upload_photo")
 
-            prompt = message.text
-            image_stream = generate_image_direct(prompt)
+        response = user_chats[user_id].send_message(message.text)
+        raw_response_text = response.text
+        user_last_responses[user_id] = raw_response_text
+        plain_response_text = markdown_to_text(raw_response_text)
+        message_parts = split_long_message(plain_response_text)
 
-            if image_stream:
-                bot.send_photo(
-                    message.chat.id,
-                    image_stream,
-                    caption=f"Изображение по запросу: {prompt}",
-                )
+        for i, part in enumerate(message_parts):
+            if i == 0:
+
+                bot.reply_to(message, part)
+
             else:
-                bot.reply_to(
-                    message,
-                    "Не удалось сгенерировать изображение. Попробуйте "
-                    "изменить запрос или проверьте API ключ.",
-                    reply_markup=get_main_keyboard(),
-                )
-        else:
-            response = user_chats[user_id].send_message(message.text)
-            raw_response_text = response.text
-            user_last_responses[user_id] = raw_response_text
 
-            plain_response_text = markdown_to_text(raw_response_text)
-            message_parts = split_long_message(plain_response_text)
-            for i, part in enumerate(message_parts):
-                if i == 0:
+                bot.send_message(message.chat.id, part)
 
-                    bot.reply_to(message, part)
-                else:
-
-                    bot.send_message(message.chat.id, part)
-
-            if len(message_parts) > 1:
-                bot.send_message(
-                    message.chat.id,
-                    "Ответ был разбит на несколько сообщений.",
-                    reply_markup=get_file_download_keyboard(user_id),
-                )
+        if len(message_parts) > 1:
+            bot.send_message(
+                message.chat.id,
+                "Ответ был разбит на несколько сообщений.",
+                reply_markup=get_file_download_keyboard(user_id),
+            )
     except Exception as e:
         bot.reply_to(
             message,

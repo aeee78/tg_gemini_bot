@@ -1,13 +1,7 @@
-from constants import IMAGE_COMMAND_PREFIXES, GEMINI_API_KEY
+from constants import GEMINI_API_KEY
 import base64
 import io
 import requests
-
-
-def is_image_generation_request(text):
-    """Проверяет, является ли запрос запросом на генерацию изображения."""
-    text_lower = text.lower()
-    return any(text_lower.startswith(prefix) for prefix in IMAGE_COMMAND_PREFIXES)
 
 
 def generate_image_direct(prompt):
