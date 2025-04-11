@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from google import genai
 from PIL import Image
 from telebot import types
+from telebot.types import BotCommand
 
 from constants import (
     AVAILABLE_MODELS,
@@ -23,7 +24,16 @@ load_dotenv()
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-
+try:
+    bot.set_my_commands(
+        [
+            BotCommand("start", "🚀 Перезапустить бота / Начать чат"),
+            BotCommand("send_mode", "✍️ Переключить режим отправки (мгновенный/ручной)"),
+            BotCommand("generate", "🖼️ Сгенерировать изображение (напр. /generate кот)"),
+        ]
+    )
+except Exception as e:
+    print(f"Error setting bot commands: {e}")
 
 user_chats = {}
 user_models = {}
@@ -36,7 +46,9 @@ def get_main_keyboard(user_id):
     """Создает основную клавиатуру."""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Новый чат"))
-    keyboard.add(types.KeyboardButton("Выбрать модель"))
+    keyboard.add(
+        types.KeyboardButton("Выбрать модель"), types.KeyboardButton("/send_mode")
+    )
     keyboard.add(types.KeyboardButton("Получить .MD"))
 
     if user_send_modes.get(user_id, SEND_MODE_IMMEDIATE) == SEND_MODE_MANUAL:
@@ -111,10 +123,13 @@ def new_chat(message):
     user_chats[user_id] = client.chats.create(model=user_models[user_id])
     user_last_responses[user_id] = None
 
+    current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+
     bot.send_message(
         message.chat.id,
         f"Начат новый чат. Контекст предыдущего разговора очищен.\n\n"
-        f"Текущая модель: {user_models[user_id]}",
+        f"Текущая модель: {user_models[user_id]}\n"
+        f"Режим отправки: {current_mode}",
         reply_markup=get_main_keyboard(user_id),
     )
 
@@ -174,7 +189,6 @@ def handle_send_mode(message):
         chat_id,
         mode_message,
         reply_markup=get_main_keyboard(user_id),
-        parse_mode="Markdown",
     )
 
 
@@ -190,7 +204,7 @@ def select_model(message):
 
 @bot.message_handler(func=lambda message: message.text == "Отправить всё")
 def handle_send_all(message):
-    """Отправляет накопленные сообщения из буфера."""
+    """Отправляет накопленные сообщения (текст и фото) из буфера, сохраняя разрывы между текстами."""
     user_id = message.from_user.id
     chat_id = message.chat.id
 
@@ -204,9 +218,9 @@ def handle_send_all(message):
         )
         return
 
-    buffered_messages = user_message_buffer.get(user_id, [])
+    buffered_items = user_message_buffer.get(user_id, [])
 
-    if not buffered_messages:
+    if not buffered_items:
         bot.reply_to(
             message,
             "Буфер сообщений пуст. Нечего отправлять.",
@@ -223,19 +237,51 @@ def handle_send_all(message):
         user_message_buffer[user_id] = []
         return
 
-    combined_message = "\n\n".join(buffered_messages)
+    combined_parts = []
+    current_text_block = ""
+
+    for item in buffered_items:
+        if item["type"] == "text":
+
+            if current_text_block:
+                current_text_block += "\n\n" + item["content"]
+            else:
+
+                current_text_block = item["content"]
+        elif item["type"] == "photo":
+
+            if current_text_block:
+                combined_parts.append(current_text_block)
+                current_text_block = ""
+
+            # Добавляем подпись (если есть) и фото
+            if item.get("caption"):
+                combined_parts.append(item["caption"])
+            combined_parts.append(item["image"])
+
+    if current_text_block:
+        combined_parts.append(current_text_block)
+
+    if not combined_parts:
+        bot.reply_to(
+            message,
+            "Не удалось сформировать сообщение для отправки из буфера (возможно, он пуст или содержит только пустые элементы).",
+            reply_markup=get_main_keyboard(user_id),
+        )
+        user_message_buffer[user_id] = []
+        return
 
     bot.send_chat_action(chat_id, "typing")
-    status_msg = bot.reply_to(message, "Отправляю накопленные сообщения в Gemini...")
+    status_msg = bot.reply_to(
+        message, "Отправляю накопленные сообщения и фото в Gemini..."
+    )
 
     try:
-
-        response = user_chats[user_id].send_message(combined_message)
+        response = user_chats[user_id].send_message(message=combined_parts)
         raw_response_text = response.text
 
         user_message_buffer[user_id] = []
-
-        user_last_responses[user_id] = raw_response_text
+        user_last_responses[user_id] = raw_response_text  # Сохраняем ответ
 
         try:
             bot.delete_message(chat_id, status_msg.message_id)
@@ -247,7 +293,6 @@ def handle_send_all(message):
 
         for i, part in enumerate(message_parts):
             if i == 0:
-
                 bot.send_message(chat_id, part, reply_to_message_id=message.message_id)
             else:
                 bot.send_message(chat_id, part)
@@ -260,7 +305,6 @@ def handle_send_all(message):
             )
 
     except Exception as e:
-
         try:
             bot.delete_message(chat_id, status_msg.message_id)
         except Exception:
@@ -268,7 +312,19 @@ def handle_send_all(message):
         bot.reply_to(
             message,
             f"Произошла ошибка при отправке: {e!s}\n\n"
-            "Ваши сообщения сохранены в буфере. Попробуйте позже или начните новый чат.",
+            "Ваши сообщения и фото сохранены в буфере. Попробуйте позже или измените содержимое буфера.",
+            reply_markup=get_main_keyboard(user_id),
+        )
+
+    except Exception as e:
+        try:
+            bot.delete_message(chat_id, status_msg.message_id)
+        except Exception:
+            pass
+        bot.reply_to(
+            message,
+            f"Произошла ошибка при отправке: {e!s}\n\n"
+            "Ваши сообщения и фото сохранены в буфере. Попробуйте позже или измените содержимое буфера.",
             reply_markup=get_main_keyboard(user_id),
         )
 
@@ -342,13 +398,15 @@ def handle_model_selection(call):
 
 @bot.message_handler(content_types=["photo"])
 def handle_photo(message):
-    """Обрабатывает сообщения с фотографиями и сохраняет контекст,
-    предполагая, что текущая модель мультимодальна."""
+    """Обрабатывает сообщения с фотографиями в зависимости от режима."""
     user_id = message.from_user.id
     chat_id = message.chat.id
 
     if user_id not in user_models:
         user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
+        user_send_modes[user_id] = SEND_MODE_IMMEDIATE
+        user_message_buffer[user_id] = []
+        user_last_responses[user_id] = None
         bot.send_message(
             chat_id,
             "Похоже, мы не общались раньше. Начинаю новый чат "
@@ -356,29 +414,71 @@ def handle_photo(message):
             reply_markup=get_main_keyboard(user_id),
         )
 
-    if user_id not in user_chats:
-        try:
-            user_chats[user_id] = client.chats.create(model=user_models[user_id])
-            user_last_responses[user_id] = None
+        if user_id not in user_chats:
+            try:
+                user_chats[user_id] = client.chats.create(model=user_models[user_id])
+            except Exception as e:
+                bot.reply_to(
+                    message, f"Ошибка инициализации чата при первом фото: {e!s}"
+                )
+                return
 
+    current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+
+    file_id = message.photo[-1].file_id
+    caption = message.caption if message.caption else ""
+    if current_mode == SEND_MODE_MANUAL:
+        try:
+            bot.send_chat_action(chat_id, "typing")
+            image_stream = download_telegram_image(file_id)
+            img = Image.open(image_stream)
+
+            if user_id not in user_message_buffer:
+                user_message_buffer[user_id] = []
+            user_message_buffer[user_id].append(
+                {"type": "photo", "image": img, "caption": caption}
+            )
+            buffer_count = len(user_message_buffer[user_id])
+            bot.reply_to(
+                message,
+                f"Фото добавлено в буфер ({buffer_count} шт.). "
+                + ("Подпись также добавлена.\n" if caption else "\n")
+                + "Нажмите 'Отправить всё', когда будете готовы.",
+                reply_markup=get_main_keyboard(user_id),
+            )
         except Exception as e:
             bot.reply_to(
                 message,
-                f"Не удалось инициализировать чат с моделью {user_models.get(user_id, 'неизвестно')}: {e!s}",
+                f"Не удалось добавить фото в буфер: {e!s}",
+                reply_markup=get_main_keyboard(user_id),
+            )
+        return
+
+    if user_id not in user_chats:
+        try:
+
+            user_chats[user_id] = client.chats.create(model=user_models[user_id])
+            user_last_responses[user_id] = None
+        except Exception as e:
+            bot.reply_to(
+                message,
+                f"Не удалось инициализировать чат перед отправкой фото: {e!s}",
                 reply_markup=get_main_keyboard(user_id),
             )
             return
-    file_id = message.photo[-1].file_id
-    bot.send_chat_action(chat_id, "typing")
 
+    bot.send_chat_action(chat_id, "typing")
     try:
         image_stream = download_telegram_image(file_id)
         img = Image.open(image_stream)
 
-        caption = message.caption if message.caption else "Опиши это изображение."
+        api_message_parts = []
+        effective_caption = caption if caption else "Опиши это изображение."
+        api_message_parts.append(effective_caption)
+        api_message_parts.append(img)
 
         chat_session = user_chats[user_id]
-        response = chat_session.send_message(message=[caption, img])
+        response = chat_session.send_message(message=api_message_parts)
 
         raw_response_text = response.text
         user_last_responses[user_id] = raw_response_text
@@ -403,8 +503,8 @@ def handle_photo(message):
     except Exception as e:
         bot.reply_to(
             message,
-            f"Произошла ошибка при обработке изображения с текущей моделью ({user_models.get(user_id, 'неизвестно')}): {e!s}\n\n"
-            "Возможно, стоит попробовать начать новый чат.",
+            f"Произошла ошибка при обработке изображения ({user_models.get(user_id, 'неизвестно')}): {e!s}\n\n"
+            "Возможно, стоит попробовать новый чат.",
             reply_markup=get_main_keyboard(user_id),
         )
 
@@ -421,7 +521,6 @@ def handle_generate_command(message):
                 message,
                 "Пожалуйста, укажите запрос после команды /generate.\n"
                 "Например: `/generate красивый рыжий кот`",
-                parse_mode="Markdown",
             )
             return
 
@@ -454,7 +553,6 @@ def handle_generate_command(message):
             message,
             "Пожалуйста, укажите запрос после команды /generate.\n"
             "Например: `/generate красивый рыжий кот`",
-            parse_mode="Markdown",
         )
     except Exception as e:
         print(f"Error during image generation command: {e}")
@@ -487,12 +585,11 @@ def handle_message(message):
     if current_mode == SEND_MODE_MANUAL:
         if user_id not in user_message_buffer:
             user_message_buffer[user_id] = []
-        user_message_buffer[user_id].append(message.text)
+        user_message_buffer[user_id].append({"type": "text", "content": message.text})
         buffer_count = len(user_message_buffer[user_id])
         bot.reply_to(
             message,
             f"Сообщение добавлено в буфер ({buffer_count} шт.). Нажмите 'Отправить всё', когда будете готовы.",
-            reply_markup=get_main_keyboard(user_id),
         )
         return
 
