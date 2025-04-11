@@ -167,7 +167,6 @@ def handle_get_file(call):
         words = raw_response.split()
         filename = "_".join(words[:3]) + ".txt" if len(words) > 0 else "response.txt"
         filename = filename.replace("/", "_").replace("\\", "_").replace(":", "_")
-
         plain_text_response = markdown_to_text(raw_response)
 
         send_text_as_file(
