@@ -1,26 +1,26 @@
 import io
 
-import google.generativeai as genai
 import requests
 import telebot
 from dotenv import load_dotenv
+from google import genai
 from PIL import Image
 from telebot import types
 
-from constants import (
-    AVAILABLE_MODELS,
-    GEMINI_API_KEY,
-    GREETING_MESSAGE_TEMPLATE,
-    TELEGRAM_TOKEN,
-)
+from constants import (AVAILABLE_MODELS, GEMINI_API_KEY,
+                       GREETING_MESSAGE_TEMPLATE, TELEGRAM_TOKEN,)
 from image_generation import generate_image_direct
 from utils import markdown_to_text, split_long_message
 
 
 load_dotenv()
 
+client = genai.Client(api_key=GEMINI_API_KEY)
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-genai.configure(api_key=GEMINI_API_KEY)
+user_chats = {}
+user_models = {}
+user_last_responses = {}
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
@@ -77,8 +77,9 @@ def send_welcome(message):
     """Обрабатывает команду /start."""
     user_id = message.from_user.id
     user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
-    model = genai.GenerativeModel(model_name=user_models[user_id])
-    user_chats[user_id] = model.start_chat(history=[])
+    user_chats[user_id] = client.chats.create(model=user_models[user_id])
+    user_last_responses[user_id] = None
+
     greeting_text = GREETING_MESSAGE_TEMPLATE.format(model_name=user_models[user_id])
 
     bot.send_message(
@@ -96,9 +97,7 @@ def new_chat(message):
     if user_id not in user_models:
         user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
 
-    model = genai.GenerativeModel(model_name=user_models[user_id])
-    user_chats[user_id] = model.start_chat(history=[])
-
+    user_chats[user_id] = client.chats.create(model=user_models[user_id])
     user_last_responses[user_id] = None
 
     bot.send_message(
@@ -192,9 +191,7 @@ def handle_model_selection(call):
 
     user_models[user_id] = selected_model
 
-    model = genai.GenerativeModel(model_name=selected_model)
-    user_chats[user_id] = model.start_chat(history=[])
-
+    user_chats[user_id] = client.chats.create(model=user_models[user_id])
     user_last_responses[user_id] = None
 
     bot.answer_callback_query(call.id)
@@ -232,9 +229,9 @@ def handle_photo(message):
 
     if user_id not in user_chats:
         try:
-            model = genai.GenerativeModel(model_name=user_models[user_id])
-            user_chats[user_id] = model.start_chat(history=[])
+            user_chats[user_id] = client.chats.create(model=user_models[user_id])
             user_last_responses[user_id] = None
+
         except Exception as e:
             bot.reply_to(
                 message,
@@ -252,8 +249,7 @@ def handle_photo(message):
         caption = message.caption if message.caption else "Опиши это изображение."
 
         chat_session = user_chats[user_id]
-
-        response = chat_session.send_message([caption, img])
+        response = chat_session.send_message(message=[caption, img])
 
         raw_response_text = response.text
         user_last_responses[user_id] = raw_response_text
@@ -349,14 +345,15 @@ def handle_message(message):
         user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
 
     if user_id not in user_chats:
-        model = genai.GenerativeModel(model_name=user_models[user_id])
-        user_chats[user_id] = model.start_chat(history=[])
+        user_chats[user_id] = client.chats.create(model=user_models[user_id])
+        user_last_responses[user_id] = None
 
     bot.send_chat_action(message.chat.id, "typing")
 
     try:
 
-        response = user_chats[user_id].send_message(message.text)
+        response = user_chats[user_id].send_message(message=message.text)
+
         raw_response_text = response.text
         user_last_responses[user_id] = raw_response_text
         plain_response_text = markdown_to_text(raw_response_text)

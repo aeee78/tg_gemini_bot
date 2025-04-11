@@ -1,7 +1,9 @@
-from constants import GEMINI_API_KEY
 import base64
 import io
+
 import requests
+
+from constants import GEMINI_API_KEY
 
 
 def generate_image_direct(prompt):
