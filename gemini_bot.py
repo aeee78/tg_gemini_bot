@@ -7,8 +7,14 @@ from google import genai
 from PIL import Image
 from telebot import types
 
-from constants import (AVAILABLE_MODELS, GEMINI_API_KEY,
-                       GREETING_MESSAGE_TEMPLATE, TELEGRAM_TOKEN,)
+from constants import (
+    AVAILABLE_MODELS,
+    GEMINI_API_KEY,
+    GREETING_MESSAGE_TEMPLATE,
+    TELEGRAM_TOKEN,
+    SEND_MODE_MANUAL,
+    SEND_MODE_IMMEDIATE,
+)
 from image_generation import generate_image_direct
 from utils import markdown_to_text, split_long_message
 
@@ -18,23 +24,24 @@ load_dotenv()
 client = genai.Client(api_key=GEMINI_API_KEY)
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-user_chats = {}
-user_models = {}
-user_last_responses = {}
-
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 user_chats = {}
 user_models = {}
 user_last_responses = {}
+user_send_modes = {}
+user_message_buffer = {}
 
 
-def get_main_keyboard():
+def get_main_keyboard(user_id):
     """Создает основную клавиатуру."""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Новый чат"))
     keyboard.add(types.KeyboardButton("Выбрать модель"))
     keyboard.add(types.KeyboardButton("Получить .MD"))
+
+    if user_send_modes.get(user_id, SEND_MODE_IMMEDIATE) == SEND_MODE_MANUAL:
+        keyboard.add(types.KeyboardButton("Отправить всё"))
+
     return keyboard
 
 
@@ -79,13 +86,17 @@ def send_welcome(message):
     user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
     user_chats[user_id] = client.chats.create(model=user_models[user_id])
     user_last_responses[user_id] = None
-
-    greeting_text = GREETING_MESSAGE_TEMPLATE.format(model_name=user_models[user_id])
-
+    user_send_modes[user_id] = SEND_MODE_IMMEDIATE
+    user_message_buffer[user_id] = []
+    user_last_responses[user_id] = None
+    greeting_text = GREETING_MESSAGE_TEMPLATE.format(
+        model_name=user_models[user_id],
+        send_mode=user_send_modes[user_id],
+    )
     bot.send_message(
         message.chat.id,
         greeting_text,
-        reply_markup=get_main_keyboard(),
+        reply_markup=get_main_keyboard(user_id),
     )
 
 
@@ -104,7 +115,7 @@ def new_chat(message):
         message.chat.id,
         f"Начат новый чат. Контекст предыдущего разговора очищен.\n\n"
         f"Текущая модель: {user_models[user_id]}",
-        reply_markup=get_main_keyboard(),
+        reply_markup=get_main_keyboard(user_id),
     )
 
 
@@ -129,8 +140,42 @@ def get_response_as_md(message):
         bot.send_message(
             message.chat.id,
             "У меня нет сохраненных ответов для отправки в виде файла.",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(user_id),
         )
+
+
+@bot.message_handler(commands=["send_mode"])
+def handle_send_mode(message):
+    """Переключает режим отправки сообщений."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+
+    new_mode = (
+        SEND_MODE_MANUAL if current_mode == SEND_MODE_IMMEDIATE else SEND_MODE_IMMEDIATE
+    )
+
+    user_send_modes[user_id] = new_mode
+
+    user_message_buffer[user_id] = []
+
+    mode_message = f"Режим отправки изменен на: *{new_mode}*\n\n"
+    if new_mode == SEND_MODE_MANUAL:
+        mode_message += "Теперь ваши сообщения будут накапливаться. Нажмите кнопку 'Отправить всё', чтобы отправить их в Gemini."
+    else:
+        mode_message += (
+            "Теперь каждое ваше сообщение будет сразу отправляться в Gemini."
+        )
+
+    mode_message += "\n\nБуфер сообщений очищен."
+
+    bot.send_message(
+        chat_id,
+        mode_message,
+        reply_markup=get_main_keyboard(user_id),
+        parse_mode="Markdown",
+    )
 
 
 @bot.message_handler(func=lambda message: message.text == "Выбрать модель")
@@ -141,6 +186,91 @@ def select_model(message):
         "Выберите модель Gemini:",
         reply_markup=get_model_selection_keyboard(),
     )
+
+
+@bot.message_handler(func=lambda message: message.text == "Отправить всё")
+def handle_send_all(message):
+    """Отправляет накопленные сообщения из буфера."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+    if current_mode != SEND_MODE_MANUAL:
+        bot.reply_to(
+            message,
+            f"Эта кнопка работает только в режиме '{SEND_MODE_MANUAL}'. "
+            f"Ваш текущий режим: '{current_mode}'. Используйте /send_mode.",
+            reply_markup=get_main_keyboard(user_id),
+        )
+        return
+
+    buffered_messages = user_message_buffer.get(user_id, [])
+
+    if not buffered_messages:
+        bot.reply_to(
+            message,
+            "Буфер сообщений пуст. Нечего отправлять.",
+            reply_markup=get_main_keyboard(user_id),
+        )
+        return
+
+    if user_id not in user_chats:
+        bot.reply_to(
+            message,
+            "Ошибка: сессия чата не найдена. Пожалуйста, начните новый чат.",
+            reply_markup=get_main_keyboard(user_id),
+        )
+        user_message_buffer[user_id] = []
+        return
+
+    combined_message = "\n\n".join(buffered_messages)
+
+    bot.send_chat_action(chat_id, "typing")
+    status_msg = bot.reply_to(message, "Отправляю накопленные сообщения в Gemini...")
+
+    try:
+
+        response = user_chats[user_id].send_message(combined_message)
+        raw_response_text = response.text
+
+        user_message_buffer[user_id] = []
+
+        user_last_responses[user_id] = raw_response_text
+
+        try:
+            bot.delete_message(chat_id, status_msg.message_id)
+        except Exception:
+            pass
+
+        plain_response_text = markdown_to_text(raw_response_text)
+        message_parts = split_long_message(plain_response_text)
+
+        for i, part in enumerate(message_parts):
+            if i == 0:
+
+                bot.send_message(chat_id, part, reply_to_message_id=message.message_id)
+            else:
+                bot.send_message(chat_id, part)
+
+        if len(message_parts) > 1:
+            bot.send_message(
+                chat_id,
+                "Ответ был разбит на несколько сообщений.",
+                reply_markup=get_file_download_keyboard(user_id),
+            )
+
+    except Exception as e:
+
+        try:
+            bot.delete_message(chat_id, status_msg.message_id)
+        except Exception:
+            pass
+        bot.reply_to(
+            message,
+            f"Произошла ошибка при отправке: {e!s}\n\n"
+            "Ваши сообщения сохранены в буфере. Попробуйте позже или начните новый чат.",
+            reply_markup=get_main_keyboard(user_id),
+        )
 
 
 def get_file_download_keyboard(user_id):
@@ -206,7 +336,7 @@ def handle_model_selection(call):
     bot.send_message(
         call.message.chat.id,
         "Можете начать новый диалог.",
-        reply_markup=get_main_keyboard(),
+        reply_markup=get_main_keyboard(user_id),
     )
 
 
@@ -223,7 +353,7 @@ def handle_photo(message):
             chat_id,
             "Похоже, мы не общались раньше. Начинаю новый чат "
             f"с моделью: {user_models[user_id]}.",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(user_id),
         )
 
     if user_id not in user_chats:
@@ -235,7 +365,7 @@ def handle_photo(message):
             bot.reply_to(
                 message,
                 f"Не удалось инициализировать чат с моделью {user_models.get(user_id, 'неизвестно')}: {e!s}",
-                reply_markup=get_main_keyboard(),
+                reply_markup=get_main_keyboard(user_id),
             )
             return
     file_id = message.photo[-1].file_id
@@ -275,7 +405,7 @@ def handle_photo(message):
             message,
             f"Произошла ошибка при обработке изображения с текущей моделью ({user_models.get(user_id, 'неизвестно')}): {e!s}\n\n"
             "Возможно, стоит попробовать начать новый чат.",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(user_id),
         )
 
 
@@ -315,7 +445,7 @@ def handle_generate_command(message):
                 message,
                 "Не удалось сгенерировать изображение. Попробуйте "
                 "изменить запрос или проверьте настройки API.",
-                reply_markup=get_main_keyboard(),
+                reply_markup=get_main_keyboard(user_id),
             )
 
     except IndexError:
@@ -331,7 +461,7 @@ def handle_generate_command(message):
         bot.reply_to(
             message,
             f"Произошла ошибка при генерации изображения: {e!s}",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(user_id),
         )
 
 
@@ -339,13 +469,32 @@ def handle_generate_command(message):
 def handle_message(message):
     """Обрабатывает текстовые сообщения."""
     user_id = message.from_user.id
-
+    chat_id = message.chat.id
     if user_id not in user_models:
         user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
-
-    if user_id not in user_chats:
-        user_chats[user_id] = client.chats.create(model=user_models[user_id])
+        user_send_modes[user_id] = SEND_MODE_IMMEDIATE
+        user_message_buffer[user_id] = []
         user_last_responses[user_id] = None
+
+        try:
+            model = genai.GenerativeModel(model_name=user_models[user_id])
+            user_chats[user_id] = model.start_chat(history=[])
+        except Exception as e:
+            bot.reply_to(message, f"Ошибка инициализации при первом сообщении: {e!s}")
+
+    current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+
+    if current_mode == SEND_MODE_MANUAL:
+        if user_id not in user_message_buffer:
+            user_message_buffer[user_id] = []
+        user_message_buffer[user_id].append(message.text)
+        buffer_count = len(user_message_buffer[user_id])
+        bot.reply_to(
+            message,
+            f"Сообщение добавлено в буфер ({buffer_count} шт.). Нажмите 'Отправить всё', когда будете готовы.",
+            reply_markup=get_main_keyboard(user_id),
+        )
+        return
 
     bot.send_chat_action(message.chat.id, "typing")
 
@@ -378,7 +527,7 @@ def handle_message(message):
             message,
             f"Произошла ошибка: {e!s}\n\nВозможно стоит "
             f"попробовать другую модель или начать новый чат.",
-            reply_markup=get_main_keyboard(),
+            reply_markup=get_main_keyboard(user_id),
         )
 
 
