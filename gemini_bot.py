@@ -10,6 +10,7 @@ from telebot.types import BotCommand
 
 from constants import (
     AVAILABLE_MODELS,
+    DEFAULT_MODEL,
     GEMINI_API_KEY,
     GREETING_MESSAGE_TEMPLATE,
     TELEGRAM_TOKEN,
@@ -95,7 +96,7 @@ def send_text_as_file(chat_id, text, filename="response.txt"):
 def send_welcome(message):
     """Обрабатывает команду /start."""
     user_id = message.from_user.id
-    user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
+    user_models[user_id] = DEFAULT_MODEL
     user_chats[user_id] = client.chats.create(model=user_models[user_id])
     user_last_responses[user_id] = None
     user_send_modes[user_id] = SEND_MODE_IMMEDIATE
@@ -118,7 +119,7 @@ def new_chat(message):
     user_id = message.from_user.id
 
     if user_id not in user_models:
-        user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
+        user_models[user_id] = DEFAULT_MODEL
 
     user_chats[user_id] = client.chats.create(model=user_models[user_id])
     user_last_responses[user_id] = None
@@ -403,7 +404,7 @@ def handle_photo(message):
     chat_id = message.chat.id
 
     if user_id not in user_models:
-        user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
+        user_models[user_id] = DEFAULT_MODEL
         user_send_modes[user_id] = SEND_MODE_IMMEDIATE
         user_message_buffer[user_id] = []
         user_last_responses[user_id] = None
@@ -569,7 +570,7 @@ def handle_message(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
     if user_id not in user_models:
-        user_models[user_id] = "gemini-2.0-flash-thinking-exp-01-21"
+        user_models[user_id] = DEFAULT_MODEL
         user_send_modes[user_id] = SEND_MODE_IMMEDIATE
         user_message_buffer[user_id] = []
         user_last_responses[user_id] = None
