@@ -8,6 +8,7 @@ from PIL import Image
 from telebot import types
 from telebot.types import BotCommand
 from google.genai import types as genai_types
+from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
 
 from constants import (
     AVAILABLE_MODELS,
@@ -33,6 +34,7 @@ try:
         [
             BotCommand("start", "🚀 Перезапустить бота / Начать чат"),
             BotCommand("send_mode", "✍️ Переключить режим отправки (мгновенный/ручной)"),
+            BotCommand("search", "🔎 Включить/выключить поиск Google"),
             BotCommand("generate", "🖼️ Сгенерировать изображение (напр. /generate кот)"),
         ]
     )
@@ -45,6 +47,7 @@ user_last_responses = {}
 user_send_modes = {}
 user_message_buffer = {}
 user_files_context = {}
+user_search_enabled = {}
 
 
 def get_main_keyboard(user_id):
@@ -107,9 +110,13 @@ def send_welcome(message):
     user_message_buffer[user_id] = []
     user_files_context[user_id] = []
     user_last_responses[user_id] = None
+    user_search_enabled[user_id] = False
     greeting_text = GREETING_MESSAGE_TEMPLATE.format(
         model_name=user_models[user_id],
         send_mode=user_send_modes[user_id],
+    )
+    greeting_text += (
+        f"\nПоиск Google: {'Вкл' if user_search_enabled[user_id] else 'Выкл'}"
     )
     bot.send_message(
         message.chat.id,
@@ -130,14 +137,17 @@ def new_chat(message):
     user_last_responses[user_id] = None
     user_files_context[user_id] = []
     user_message_buffer[user_id] = []
+    user_search_enabled[user_id] = user_search_enabled.get(user_id, False)
 
     current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+    search_status = "Вкл" if user_search_enabled[user_id] else "Выкл"
 
     bot.send_message(
         message.chat.id,
         f"Начат новый чат. Контекст предыдущего разговора очищен.\n\n"
         f"Текущая модель: {user_models[user_id]}\n"
-        f"Режим отправки: {current_mode}",
+        f"Режим отправки: {current_mode}\n"
+        f"Поиск Google: {search_status}",
         reply_markup=get_main_keyboard(user_id),
     )
 
@@ -196,6 +206,26 @@ def handle_send_mode(message):
     bot.send_message(
         chat_id,
         mode_message,
+        reply_markup=get_main_keyboard(user_id),
+    )
+
+
+@bot.message_handler(commands=["search"])
+def handle_search_command(message):
+    """Переключает режим поиска Google."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    if user_id not in user_search_enabled:
+        user_search_enabled[user_id] = False
+
+    user_search_enabled[user_id] = not user_search_enabled[user_id]
+
+    search_status = "Вкл ✅" if user_search_enabled[user_id] else "Выкл ❌"
+    bot.reply_to(
+        message,
+        f"🔎 Поиск Google теперь: *{search_status}*",
+        parse_mode="Markdown",
         reply_markup=get_main_keyboard(user_id),
     )
 
@@ -305,8 +335,37 @@ def handle_send_all(message):
     )
 
     try:
-        response = user_chats[user_id].send_message(message=combined_parts)
+        gemini_config = None
+        if user_search_enabled.get(user_id, False):
+            google_search_tool = Tool(google_search=GoogleSearch())
+            gemini_config = GenerateContentConfig(tools=[google_search_tool])
+
+        response = user_chats[user_id].send_message(
+            message=combined_parts, config=gemini_config
+        )
         raw_response_text = response.text
+
+        sources_text = ""
+        try:
+            if (
+                response.candidates
+                and response.candidates[0].grounding_metadata
+                and response.candidates[0].grounding_metadata.grounding_chunks
+            ):
+                sources = []
+                for i, chunk in enumerate(
+                    response.candidates[0].grounding_metadata.grounding_chunks
+                ):
+                    if hasattr(chunk, "web") and chunk.web.uri and chunk.web.title:
+                        sources.append(f"{i+1}. [{chunk.web.title}]({chunk.web.uri})")
+                    elif hasattr(chunk, "web") and chunk.web.uri:
+                        sources.append(f"{i+1}. [{chunk.web.uri}]({chunk.web.uri})")
+
+                if sources:
+                    sources_text = "\n\n*Источники:*\n" + "\n".join(sources)
+                    raw_response_text += sources_text
+        except (AttributeError, IndexError) as e:
+            print(f"Не удалось извлечь источники: {e}")
 
         user_message_buffer[user_id] = []
         user_last_responses[user_id] = raw_response_text
@@ -438,6 +497,7 @@ def handle_document(message):
         user_message_buffer[user_id] = []
         user_files_context[user_id] = []
         user_last_responses[user_id] = None
+        user_search_enabled[user_id] = False
         bot.send_message(
             chat_id,
             "Похоже, мы не общались раньше. Начинаю новый чат "
@@ -488,7 +548,6 @@ def handle_document(message):
             current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
 
             if current_mode == SEND_MODE_MANUAL:
-                # Добавляем в буфер для ручного режима
                 if user_id not in user_message_buffer:
                     user_message_buffer[user_id] = []
                 user_message_buffer[user_id].append({**file_data, "type": "document"})
@@ -545,6 +604,7 @@ def handle_photo(message):
         user_send_modes[user_id] = SEND_MODE_IMMEDIATE
         user_message_buffer[user_id] = []
         user_last_responses[user_id] = None
+        user_search_enabled[user_id] = False
         bot.send_message(
             chat_id,
             "Похоже, мы не общались раньше. Начинаю новый чат "
@@ -711,10 +771,11 @@ def handle_message(message):
         user_send_modes[user_id] = SEND_MODE_IMMEDIATE
         user_message_buffer[user_id] = []
         user_last_responses[user_id] = None
+        user_search_enabled[user_id] = False
 
         try:
-            model = genai.GenerativeModel(model_name=user_models[user_id])
-            user_chats[user_id] = model.start_chat(history=[])
+            pass
+
         except Exception as e:
             bot.reply_to(message, f"Ошибка инициализации при первом сообщении: {e!s}")
 
@@ -775,11 +836,42 @@ def handle_message(message):
                 )
                 return
 
-        response = user_chats[user_id].send_message(message=api_message_parts)
+        gemini_config = None
+        if user_search_enabled.get(user_id, False):
+            google_search_tool = Tool(google_search=GoogleSearch())
+            gemini_config = GenerateContentConfig(tools=[google_search_tool])
+
+        response = user_chats[user_id].send_message(
+            message=api_message_parts, config=gemini_config
+        )
 
         raw_response_text = response.text
+
+        sources_text = ""
+        try:
+            if (
+                response.candidates
+                and response.candidates[0].grounding_metadata
+                and response.candidates[0].grounding_metadata.grounding_chunks
+            ):
+                sources = []
+                for i, chunk in enumerate(
+                    response.candidates[0].grounding_metadata.grounding_chunks
+                ):
+                    if hasattr(chunk, "web") and chunk.web.uri and chunk.web.title:
+                        sources.append(f"{i+1}. [{chunk.web.title}]({chunk.web.uri})")
+                    elif hasattr(chunk, "web") and chunk.web.uri:
+                        sources.append(f"{i+1}. [{chunk.web.uri}]({chunk.web.uri})")
+
+                if sources:
+                    sources_text = "\n\n*Источники:*\n" + "\n".join(sources)
+                    raw_response_text += sources_text
+        except (AttributeError, IndexError) as e:
+            print(f"Не удалось извлечь источники: {e}")
+
         user_last_responses[user_id] = raw_response_text
-        plain_response_text = markdown_to_text(raw_response_text)
+
+        plain_response_text = markdown_to_text(response.text) + sources_text
         message_parts = split_long_message(plain_response_text)
 
         for i, part in enumerate(message_parts):
