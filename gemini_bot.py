@@ -140,7 +140,7 @@ def new_chat(message):
     user_search_enabled[user_id] = user_search_enabled.get(user_id, False)
 
     current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
-    search_status = "Вкл" if user_search_enabled[user_id] else "Выкл"
+    search_status = "Вкл ✅" if user_search_enabled[user_id] else "Выкл ❌"
 
     bot.send_message(
         message.chat.id,
