@@ -214,7 +214,6 @@ def handle_send_mode(message):
 def handle_search_command(message):
     """Переключает режим поиска Google."""
     user_id = message.from_user.id
-    chat_id = message.chat.id
 
     if user_id not in user_search_enabled:
         user_search_enabled[user_id] = False
