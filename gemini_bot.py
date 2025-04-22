@@ -7,6 +7,7 @@ from google import genai
 from PIL import Image
 from telebot import types
 from telebot.types import BotCommand
+from google.genai import types as genai_types
 
 from constants import (
     AVAILABLE_MODELS,
@@ -16,6 +17,8 @@ from constants import (
     TELEGRAM_TOKEN,
     SEND_MODE_MANUAL,
     SEND_MODE_IMMEDIATE,
+    MAX_FILE_SIZE_MB,
+    SUPPORTED_MIME_TYPES,
 )
 from image_generation import generate_image_direct
 from utils import markdown_to_text, split_long_message
@@ -41,6 +44,7 @@ user_models = {}
 user_last_responses = {}
 user_send_modes = {}
 user_message_buffer = {}
+user_files_context = {}
 
 
 def get_main_keyboard(user_id):
@@ -101,6 +105,7 @@ def send_welcome(message):
     user_last_responses[user_id] = None
     user_send_modes[user_id] = SEND_MODE_IMMEDIATE
     user_message_buffer[user_id] = []
+    user_files_context[user_id] = []
     user_last_responses[user_id] = None
     greeting_text = GREETING_MESSAGE_TEMPLATE.format(
         model_name=user_models[user_id],
@@ -123,6 +128,8 @@ def new_chat(message):
 
     user_chats[user_id] = client.chats.create(model=user_models[user_id])
     user_last_responses[user_id] = None
+    user_files_context[user_id] = []
+    user_message_buffer[user_id] = []
 
     current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
 
@@ -255,10 +262,30 @@ def handle_send_all(message):
                 combined_parts.append(current_text_block)
                 current_text_block = ""
 
-            # Добавляем подпись (если есть) и фото
             if item.get("caption"):
                 combined_parts.append(item["caption"])
             combined_parts.append(item["image"])
+        elif item["type"] == "document":
+            if current_text_block:
+                combined_parts.append(current_text_block)
+                current_text_block = ""
+            if item.get("caption"):
+                combined_parts.append(item["caption"])
+            try:
+                combined_parts.append(
+                    genai_types.Part.from_bytes(
+                        mime_type=item["mime_type"], data=item["data"]
+                    )
+                )
+
+                combined_parts.append(f"(Файл: {item['filename']})")
+            except Exception as file_err:
+                bot.send_message(
+                    chat_id,
+                    f"⚠️ Не удалось добавить файл '{item['filename']}' из буфера в запрос: {file_err}",
+                )
+
+                continue
 
     if current_text_block:
         combined_parts.append(current_text_block)
@@ -282,7 +309,7 @@ def handle_send_all(message):
         raw_response_text = response.text
 
         user_message_buffer[user_id] = []
-        user_last_responses[user_id] = raw_response_text  # Сохраняем ответ
+        user_last_responses[user_id] = raw_response_text
 
         try:
             bot.delete_message(chat_id, status_msg.message_id)
@@ -379,6 +406,8 @@ def handle_model_selection(call):
 
     user_chats[user_id] = client.chats.create(model=user_models[user_id])
     user_last_responses[user_id] = None
+    user_files_context[user_id] = []
+    user_message_buffer[user_id] = []
 
     bot.answer_callback_query(call.id)
     bot.edit_message_text(
@@ -395,6 +424,114 @@ def handle_model_selection(call):
         "Можете начать новый диалог.",
         reply_markup=get_main_keyboard(user_id),
     )
+
+
+@bot.message_handler(content_types=["document"])
+def handle_document(message):
+    """Обрабатывает входящие документы поддерживаемых типов, сохраняя их в контекст."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    if user_id not in user_models:
+        user_models[user_id] = DEFAULT_MODEL
+        user_send_modes[user_id] = SEND_MODE_IMMEDIATE
+        user_message_buffer[user_id] = []
+        user_files_context[user_id] = []
+        user_last_responses[user_id] = None
+        bot.send_message(
+            chat_id,
+            "Похоже, мы не общались раньше. Начинаю новый чат "
+            f"с моделью: {user_models[user_id]}.",
+            reply_markup=get_main_keyboard(user_id),
+        )
+        if user_id not in user_chats:
+            try:
+                user_chats[user_id] = client.chats.create(model=user_models[user_id])
+            except Exception as e:
+                bot.reply_to(
+                    message, f"Ошибка инициализации чата при первом документе: {e!s}"
+                )
+                return
+
+    doc_mime_type = message.document.mime_type
+    if doc_mime_type in SUPPORTED_MIME_TYPES:
+        try:
+            bot.send_chat_action(chat_id, "upload_document")
+            file_info = bot.get_file(message.document.file_id)
+
+            if file_info.file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
+                bot.reply_to(
+                    message,
+                    f"❌ Файл '{message.document.file_name}' слишком большой "
+                    f"(> {MAX_FILE_SIZE_MB} МБ). Я могу обрабатывать файлы размером до {MAX_FILE_SIZE_MB} МБ.",
+                    reply_markup=get_main_keyboard(user_id),
+                )
+                return
+
+            downloaded_file = bot.download_file(file_info.file_path)
+            pdf_bytes = downloaded_file
+            filename = message.document.file_name
+            caption = message.caption or ""
+
+            file_data = {
+                "mime_type": doc_mime_type,
+                "data": pdf_bytes,
+                "filename": filename,
+                "caption": caption,
+            }
+
+            if user_id not in user_files_context:
+                user_files_context[user_id] = []
+            user_files_context[user_id].append(file_data)
+            context_count = len(user_files_context[user_id])
+
+            current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+
+            if current_mode == SEND_MODE_MANUAL:
+                # Добавляем в буфер для ручного режима
+                if user_id not in user_message_buffer:
+                    user_message_buffer[user_id] = []
+                user_message_buffer[user_id].append({**file_data, "type": "document"})
+                buffer_count = len(user_message_buffer[user_id])
+                file_type_short = doc_mime_type.split("/")[-1].upper()
+                bot.reply_to(
+                    message,
+                    f"📄 Файл '{filename}' ({file_type_short}) добавлен в буфер ({buffer_count} шт.). "
+                    + ("Подпись также добавлена.\n" if caption else "\n")
+                    + f"Всего файлов в контексте: {context_count}.\n"
+                    + "Нажмите 'Отправить всё', когда будете готовы.",
+                    reply_markup=get_main_keyboard(user_id),
+                )
+            else:
+                file_type_short = doc_mime_type.split("/")[-1].upper()
+                bot.reply_to(
+                    message,
+                    f"✅ Файл '{filename}' ({file_type_short}) добавлен в контекст (всего: {context_count}). "
+                    "Он будет автоматически использован при следующем текстовом запросе.",
+                    reply_markup=get_main_keyboard(user_id),
+                )
+
+        except Exception as e:
+            bot.reply_to(
+                message,
+                f"Не удалось обработать файл '{message.document.file_name}': {e!s}",
+                reply_markup=get_main_keyboard(user_id),
+            )
+    else:
+        supported_types_str = ", ".join(
+            sorted(
+                [
+                    t.split("/")[-1].upper()
+                    for t in SUPPORTED_MIME_TYPES
+                    if not t.startswith("application/x")
+                ]
+            )
+        )
+        bot.reply_to(
+            message,
+            f"Извините, я не могу обработать этот тип файла ({doc_mime_type}). \nПоддерживаемые типы: {supported_types_str}",
+            reply_markup=get_main_keyboard(user_id),
+        )
 
 
 @bot.message_handler(content_types=["photo"])
@@ -598,7 +735,47 @@ def handle_message(message):
 
     try:
 
-        response = user_chats[user_id].send_message(message=message.text)
+        api_message_parts = []
+
+        files_in_context = user_files_context.get(user_id, [])
+        if files_in_context:
+            bot.send_message(
+                chat_id,
+                f"📎 Использую {len(files_in_context)} файл(а/ов) из контекста...",
+            )
+            for file_info in files_in_context:
+
+                if file_info["caption"]:
+                    api_message_parts.append(file_info["caption"])
+
+                try:
+                    api_message_parts.append(
+                        genai_types.Part.from_bytes(
+                            mime_type=file_info["mime_type"], data=file_info["data"]
+                        )
+                    )
+
+                    api_message_parts.append(f"(Файл: {file_info['filename']})")
+                except Exception as file_err:
+                    bot.send_message(
+                        chat_id,
+                        f"⚠️ Не удалось добавить файл '{file_info['filename']}' в запрос: {file_err}",
+                    )
+
+        api_message_parts.append(message.text)
+
+        if user_id not in user_chats:
+
+            try:
+                model = genai.GenerativeModel(model_name=user_models[user_id])
+                user_chats[user_id] = model.start_chat(history=[])
+            except Exception as e:
+                bot.reply_to(
+                    message, f"Ошибка инициализации чата перед отправкой: {e!s}"
+                )
+                return
+
+        response = user_chats[user_id].send_message(message=api_message_parts)
 
         raw_response_text = response.text
         user_last_responses[user_id] = raw_response_text
