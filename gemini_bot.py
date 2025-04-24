@@ -20,6 +20,7 @@ from constants import (
     SEND_MODE_IMMEDIATE,
     MAX_FILE_SIZE_MB,
     SUPPORTED_MIME_TYPES,
+    COMMAND_LIST,
 )
 from image_generation import generate_image_direct
 from utils import markdown_to_text, split_long_message
@@ -30,14 +31,7 @@ load_dotenv()
 client = genai.Client(api_key=GEMINI_API_KEY)
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 try:
-    bot.set_my_commands(
-        [
-            BotCommand("start", "🚀 Перезапустить бота / Начать чат"),
-            BotCommand("send_mode", "✍️ Переключить режим отправки (мгновенный/ручной)"),
-            BotCommand("search", "🔎 Включить/выключить поиск Google"),
-            BotCommand("generate", "🖼️ Сгенерировать изображение (напр. /generate кот)"),
-        ]
-    )
+    bot.set_my_commands(COMMAND_LIST)
 except Exception as e:
     print(f"Error setting bot commands: {e}")
 
@@ -109,19 +103,23 @@ def send_welcome(message):
     user_send_modes[user_id] = SEND_MODE_IMMEDIATE
     user_message_buffer[user_id] = []
     user_files_context[user_id] = []
-    user_last_responses[user_id] = None
     user_search_enabled[user_id] = False
+
+    search_status_text = "Вкл ✅" if user_search_enabled[user_id] else "Выкл ❌"
+
     greeting_text = GREETING_MESSAGE_TEMPLATE.format(
         model_name=user_models[user_id],
         send_mode=user_send_modes[user_id],
+        search_status=search_status_text,
+        send_mode_immediate=SEND_MODE_IMMEDIATE,
+        send_mode_manual=SEND_MODE_MANUAL,
     )
-    greeting_text += (
-        f"\nПоиск Google: {'Вкл' if user_search_enabled[user_id] else 'Выкл'}"
-    )
+
     bot.send_message(
         message.chat.id,
         greeting_text,
         reply_markup=get_main_keyboard(user_id),
+        parse_mode="Markdown",
     )
 
 
@@ -214,7 +212,6 @@ def handle_send_mode(message):
 def handle_search_command(message):
     """Переключает режим поиска Google."""
     user_id = message.from_user.id
-    chat_id = message.chat.id
 
     if user_id not in user_search_enabled:
         user_search_enabled[user_id] = False
