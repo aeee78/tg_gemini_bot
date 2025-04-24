@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 from google import genai
 from PIL import Image
 from telebot import types
-from telebot.types import BotCommand
 from google.genai import types as genai_types
 from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
 
