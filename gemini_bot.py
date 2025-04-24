@@ -4,28 +4,17 @@ import requests
 import telebot
 from dotenv import load_dotenv
 from google import genai
-from PIL import Image
 from google.genai import types as genai_types
-from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
+from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
+from PIL import Image
 
-from constants import (
-    DEFAULT_MODEL,
-    GEMINI_API_KEY,
-    GREETING_MESSAGE_TEMPLATE,
-    TELEGRAM_TOKEN,
-    SEND_MODE_MANUAL,
-    SEND_MODE_IMMEDIATE,
-    MAX_FILE_SIZE_MB,
-    SUPPORTED_MIME_TYPES,
-    COMMAND_LIST,
-)
+from constants import (COMMAND_LIST, DEFAULT_MODEL, GEMINI_API_KEY,
+                       GREETING_MESSAGE_TEMPLATE, MAX_FILE_SIZE_MB,
+                       SEND_MODE_IMMEDIATE, SEND_MODE_MANUAL,
+                       SUPPORTED_MIME_TYPES, TELEGRAM_TOKEN, get_model_alias,)
 from image_generation import generate_image_direct
-from keyboards import (
-    get_file_download_keyboard,
-    get_main_keyboard,
-    get_model_selection_keyboard,
-)
-from constants import get_model_alias
+from keyboards import (get_file_download_keyboard, get_main_keyboard,
+                       get_model_selection_keyboard,)
 from utils import markdown_to_text, split_long_message
 
 
@@ -134,10 +123,10 @@ def new_chat(message):
 
 
 @bot.message_handler(
-    func=lambda message: message.text == "Получить .MD",
+    func=lambda message: message.text == "Получить .MD 📄",
 )
 def get_response_as_md(message):
-    """Обрабатывает нажатие кнопки "Получить .MD"."""
+    """Обрабатывает нажатие кнопки "Получить .MD 📄"."""
     user_id = message.from_user.id
 
     if user_last_responses.get(user_id):
@@ -369,7 +358,7 @@ def handle_send_all(message):
                         sources.append(f"{i+1}. [{chunk.web.uri}]({chunk.web.uri})")
 
                 if sources:
-                    sources_text = "\n\n*Источники:*\n" + "\n".join(sources)
+                    sources_text = "\n\nИсточники:\n" + "\n".join(sources)
                     raw_response_text += sources_text
         except (AttributeError, IndexError) as e:
             print(f"Не удалось извлечь источники: {e}")
@@ -937,7 +926,7 @@ def handle_message(message):
                         sources.append(f"{i+1}. [{chunk.web.uri}]({chunk.web.uri})")
 
                 if sources:
-                    sources_text = "\n\n*Источники:*\n" + "\n".join(sources)
+                    sources_text = "\n\nИсточники:\n" + "\n".join(sources)
                     raw_response_text += sources_text
         except (AttributeError, IndexError) as e:
             print(f"Не удалось извлечь источники: {e}")

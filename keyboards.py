@@ -1,12 +1,7 @@
 from telebot import types
 
-from constants import (
-    AVAILABLE_MODELS,
-    SEND_MODE_IMMEDIATE,
-    SEND_MODE_MANUAL,
-    MODEL_ALIASES,
-    get_model_alias,
-)
+from constants import (AVAILABLE_MODELS, MODEL_ALIASES, SEND_MODE_IMMEDIATE,
+                       SEND_MODE_MANUAL, get_model_alias,)
 
 
 def get_main_keyboard(
@@ -28,7 +23,7 @@ def get_main_keyboard(
         types.KeyboardButton(send_mode_button_text),
     )
     keyboard.add(
-        types.KeyboardButton("Получить .MD"), types.KeyboardButton(search_button_text)
+        types.KeyboardButton("Получить .MD 📄"), types.KeyboardButton(search_button_text)
     )
 
     if current_send_mode == SEND_MODE_MANUAL:
