@@ -25,6 +25,7 @@ from keyboards import (
     get_main_keyboard,
     get_model_selection_keyboard,
 )
+from constants import get_model_alias
 from utils import markdown_to_text, split_long_message
 
 
@@ -79,10 +80,12 @@ def send_welcome(message):
     user_files_context[user_id] = []
     user_search_enabled[user_id] = False
 
-    search_status_text = "Вкл ✅" if user_search_enabled[user_id] else "Выкл ❌"
+    search_enabled = user_search_enabled[user_id]
+    current_model = user_models[user_id]
+    search_status_text = "Вкл ✅" if search_enabled else "Выкл ❌"
 
     greeting_text = GREETING_MESSAGE_TEMPLATE.format(
-        model_name=user_models[user_id],
+        model_name=get_model_alias(current_model),
         send_mode=user_send_modes[user_id],
         search_status=search_status_text,
         send_mode_immediate=SEND_MODE_IMMEDIATE,
@@ -92,7 +95,9 @@ def send_welcome(message):
     bot.send_message(
         message.chat.id,
         greeting_text,
-        reply_markup=get_main_keyboard(user_id, user_send_modes),
+        reply_markup=get_main_keyboard(
+            user_id, user_send_modes, search_enabled, current_model
+        ),
         parse_mode="Markdown",
     )
 
@@ -112,15 +117,19 @@ def new_chat(message):
     user_search_enabled[user_id] = user_search_enabled.get(user_id, False)
 
     current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
-    search_status = "Вкл ✅" if user_search_enabled[user_id] else "Выкл ❌"
+    search_enabled = user_search_enabled[user_id]
+    current_model = user_models[user_id]
+    search_status = "Вкл ✅" if search_enabled else "Выкл ❌"
 
     bot.send_message(
         message.chat.id,
         f"Начат новый чат. Контекст предыдущего разговора очищен.\n\n"
-        f"Текущая модель: {user_models[user_id]}\n"
+        f"Текущая модель: {get_model_alias(current_model)}\n"
         f"Режим отправки: {current_mode}\n"
         f"Поиск Google: {search_status}",
-        reply_markup=get_main_keyboard(user_id, user_send_modes),
+        reply_markup=get_main_keyboard(
+            user_id, user_send_modes, search_enabled, current_model
+        ),
     )
 
 
@@ -142,14 +151,18 @@ def get_response_as_md(message):
             filename,
         )
     else:
+        search_enabled = user_search_enabled.get(user_id, False)
+        current_model = user_models.get(user_id, DEFAULT_MODEL)
         bot.send_message(
             message.chat.id,
             "У меня нет сохраненных ответов для отправки в виде файла.",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id, user_send_modes, search_enabled, current_model
+            ),
         )
 
 
-@bot.message_handler(commands=["send_mode"])
+@bot.message_handler(func=lambda message: message.text.startswith("Режим:"))
 def handle_send_mode(message):
     """Переключает режим отправки сообщений."""
     user_id = message.from_user.id
@@ -173,16 +186,19 @@ def handle_send_mode(message):
             "Теперь каждое ваше сообщение будет сразу отправляться в Gemini."
         )
 
-    mode_message += "\n\nБуфер сообщений очищен."
-
+    search_enabled = user_search_enabled.get(user_id, False)
+    current_model = user_models.get(user_id, DEFAULT_MODEL)
     bot.send_message(
         chat_id,
         mode_message,
-        reply_markup=get_main_keyboard(user_id, user_send_modes),
+        reply_markup=get_main_keyboard(
+            user_id, user_send_modes, search_enabled, current_model
+        ),
+        parse_mode="Markdown",
     )
 
 
-@bot.message_handler(commands=["search"])
+@bot.message_handler(func=lambda message: message.text.startswith("Поиск:"))
 def handle_search_command(message):
     """Переключает режим поиска Google."""
     user_id = message.from_user.id
@@ -192,16 +208,20 @@ def handle_search_command(message):
 
     user_search_enabled[user_id] = not user_search_enabled[user_id]
 
-    search_status = "Вкл ✅" if user_search_enabled[user_id] else "Выкл ❌"
+    search_enabled = user_search_enabled[user_id]
+    current_model = user_models.get(user_id, DEFAULT_MODEL)
+    search_status = "Вкл ✅" if search_enabled else "Выкл ❌"
     bot.reply_to(
         message,
         f"🔎 Поиск Google теперь: *{search_status}*",
         parse_mode="Markdown",
-        reply_markup=get_main_keyboard(user_id, user_send_modes),
+        reply_markup=get_main_keyboard(
+            user_id, user_send_modes, search_enabled, current_model
+        ),
     )
 
 
-@bot.message_handler(func=lambda message: message.text == "Выбрать модель")
+@bot.message_handler(func=lambda message: message.text.startswith("Модель:"))
 def select_model(message):
     """Обрабатывает нажатие кнопки "Выбрать модель"."""
     bot.send_message(
@@ -219,29 +239,41 @@ def handle_send_all(message):
 
     current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
     if current_mode != SEND_MODE_MANUAL:
+        search_enabled = user_search_enabled.get(user_id, False)
+        current_model = user_models.get(user_id, DEFAULT_MODEL)
         bot.reply_to(
             message,
             f"Эта кнопка работает только в режиме '{SEND_MODE_MANUAL}'. "
             f"Ваш текущий режим: '{current_mode}'. Используйте /send_mode.",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id, user_send_modes, search_enabled, current_model
+            ),
         )
         return
 
     buffered_items = user_message_buffer.get(user_id, [])
 
     if not buffered_items:
+        search_enabled = user_search_enabled.get(user_id, False)
+        current_model = user_models.get(user_id, DEFAULT_MODEL)
         bot.reply_to(
             message,
             "Буфер сообщений пуст. Нечего отправлять.",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id, user_send_modes, search_enabled, current_model
+            ),
         )
         return
 
     if user_id not in user_chats:
+        search_enabled = user_search_enabled.get(user_id, False)
+        current_model = user_models.get(user_id, DEFAULT_MODEL)
         bot.reply_to(
             message,
             "Ошибка: сессия чата не найдена. Пожалуйста, начните новый чат.",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id, user_send_modes, search_enabled, current_model
+            ),
         )
         user_message_buffer[user_id] = []
         return
@@ -292,10 +324,14 @@ def handle_send_all(message):
         combined_parts.append(current_text_block)
 
     if not combined_parts:
+        search_enabled = user_search_enabled.get(user_id, False)
+        current_model = user_models.get(user_id, DEFAULT_MODEL)
         bot.reply_to(
             message,
             "Не удалось сформировать сообщение для отправки из буфера (возможно, он пуст или содержит только пустые элементы).",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id, user_send_modes, search_enabled, current_model
+            ),
         )
         user_message_buffer[user_id] = []
         return
@@ -371,7 +407,12 @@ def handle_send_all(message):
             message,
             f"Произошла ошибка при отправке: {e!s}\n\n"
             "Ваши сообщения и фото сохранены в буфере. Попробуйте позже или измените содержимое буфера.",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id,
+                user_send_modes,
+                user_search_enabled.get(user_id, False),
+                user_models.get(user_id, DEFAULT_MODEL),
+            ),
         )
 
     except Exception as e:
@@ -383,7 +424,12 @@ def handle_send_all(message):
             message,
             f"Произошла ошибка при отправке: {e!s}\n\n"
             "Ваши сообщения и фото сохранены в буфере. Попробуйте позже или измените содержимое буфера.",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id,
+                user_send_modes,
+                user_search_enabled.get(user_id, False),
+                user_models.get(user_id, DEFAULT_MODEL),
+            ),
         )
 
 
@@ -432,15 +478,19 @@ def handle_model_selection(call):
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         text=(
-            f"Выбрана модель: {selected_model}\n\n"
+            f"Выбрана модель: {get_model_alias(selected_model)}\n\n"
             f"Контекст предыдущего разговора очищен."
         ),
     )
 
+    search_enabled = user_search_enabled.get(user_id, False)
+    current_model = user_models.get(user_id, DEFAULT_MODEL)
     bot.send_message(
         call.message.chat.id,
         "Можете начать новый диалог.",
-        reply_markup=get_main_keyboard(user_id, user_send_modes),
+        reply_markup=get_main_keyboard(
+            user_id, user_send_modes, search_enabled, current_model
+        ),
     )
 
 
@@ -461,7 +511,12 @@ def handle_document(message):
             chat_id,
             "Похоже, мы не общались раньше. Начинаю новый чат "
             f"с моделью: {user_models[user_id]}.",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id,
+                user_send_modes,
+                user_search_enabled[user_id],
+                user_models[user_id],
+            ),
         )
         if user_id not in user_chats:
             try:
@@ -483,7 +538,12 @@ def handle_document(message):
                     message,
                     f"❌ Файл '{message.document.file_name}' слишком большой "
                     f"(> {MAX_FILE_SIZE_MB} МБ). Я могу обрабатывать файлы размером до {MAX_FILE_SIZE_MB} МБ.",
-                    reply_markup=get_main_keyboard(user_id, user_send_modes),
+                    reply_markup=get_main_keyboard(
+                        user_id,
+                        user_send_modes,
+                        user_search_enabled.get(user_id, False),
+                        user_models.get(user_id, DEFAULT_MODEL),
+                    ),
                 )
                 return
 
@@ -518,7 +578,12 @@ def handle_document(message):
                     + ("Подпись также добавлена.\n" if caption else "\n")
                     + f"Всего файлов в контексте: {context_count}.\n"
                     + "Нажмите 'Отправить всё', когда будете готовы.",
-                    reply_markup=get_main_keyboard(user_id, user_send_modes),
+                    reply_markup=get_main_keyboard(
+                        user_id,
+                        user_send_modes,
+                        user_search_enabled.get(user_id, False),
+                        user_models.get(user_id, DEFAULT_MODEL),
+                    ),
                 )
             else:
                 file_type_short = doc_mime_type.split("/")[-1].upper()
@@ -526,14 +591,24 @@ def handle_document(message):
                     message,
                     f"✅ Файл '{filename}' ({file_type_short}) добавлен в контекст (всего: {context_count}). "
                     "Он будет автоматически использован при следующем текстовом запросе.",
-                    reply_markup=get_main_keyboard(user_id, user_send_modes),
+                    reply_markup=get_main_keyboard(
+                        user_id,
+                        user_send_modes,
+                        user_search_enabled.get(user_id, False),
+                        user_models.get(user_id, DEFAULT_MODEL),
+                    ),
                 )
 
         except Exception as e:
             bot.reply_to(
                 message,
                 f"Не удалось обработать файл '{message.document.file_name}': {e!s}",
-                reply_markup=get_main_keyboard(user_id, user_send_modes),
+                reply_markup=get_main_keyboard(
+                    user_id,
+                    user_send_modes,
+                    user_search_enabled.get(user_id, False),
+                    user_models.get(user_id, DEFAULT_MODEL),
+                ),
             )
     else:
         supported_types_str = ", ".join(
@@ -548,7 +623,12 @@ def handle_document(message):
         bot.reply_to(
             message,
             f"Извините, я не могу обработать этот тип файла ({doc_mime_type}). \nПоддерживаемые типы: {supported_types_str}",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id,
+                user_send_modes,
+                user_search_enabled.get(user_id, False),
+                user_models.get(user_id, DEFAULT_MODEL),
+            ),
         )
 
 
@@ -568,7 +648,12 @@ def handle_photo(message):
             chat_id,
             "Похоже, мы не общались раньше. Начинаю новый чат "
             f"с моделью: {user_models[user_id]}.",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id,
+                user_send_modes,
+                user_search_enabled[user_id],
+                user_models[user_id],
+            ),
         )
 
         if user_id not in user_chats:
@@ -601,13 +686,23 @@ def handle_photo(message):
                 f"Фото добавлено в буфер ({buffer_count} шт.). "
                 + ("Подпись также добавлена.\n" if caption else "\n")
                 + "Нажмите 'Отправить всё', когда будете готовы.",
-                reply_markup=get_main_keyboard(user_id, user_send_modes),
+                reply_markup=get_main_keyboard(
+                    user_id,
+                    user_send_modes,
+                    user_search_enabled.get(user_id, False),
+                    user_models.get(user_id, DEFAULT_MODEL),
+                ),
             )
         except Exception as e:
             bot.reply_to(
                 message,
                 f"Не удалось добавить фото в буфер: {e!s}",
-                reply_markup=get_main_keyboard(user_id, user_send_modes),
+                reply_markup=get_main_keyboard(
+                    user_id,
+                    user_send_modes,
+                    user_search_enabled.get(user_id, False),
+                    user_models.get(user_id, DEFAULT_MODEL),
+                ),
             )
         return
 
@@ -620,7 +715,12 @@ def handle_photo(message):
             bot.reply_to(
                 message,
                 f"Не удалось инициализировать чат перед отправкой фото: {e!s}",
-                reply_markup=get_main_keyboard(user_id, user_send_modes),
+                reply_markup=get_main_keyboard(
+                    user_id,
+                    user_send_modes,
+                    user_search_enabled.get(user_id, False),
+                    user_models.get(user_id, DEFAULT_MODEL),
+                ),
             )
             return
 
@@ -652,8 +752,7 @@ def handle_photo(message):
         if len(message_parts) > 1:
             bot.send_message(
                 chat_id,
-                "Ответ был разбит на несколько сообщений. Вы можете "
-                "получить полный ответ в виде файла.",
+                "Ответ был разбит на несколько сообщений.",
                 reply_markup=get_file_download_keyboard(user_id),
             )
 
@@ -662,7 +761,12 @@ def handle_photo(message):
             message,
             f"Произошла ошибка при обработке изображения ({user_models.get(user_id, 'неизвестно')}): {e!s}\n\n"
             "Возможно, стоит попробовать новый чат.",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id,
+                user_send_modes,
+                user_search_enabled.get(user_id, False),
+                user_models.get(user_id, DEFAULT_MODEL),
+            ),
         )
 
 
@@ -701,7 +805,12 @@ def handle_generate_command(message):
                 message,
                 "Не удалось сгенерировать изображение. Попробуйте "
                 "изменить запрос или проверьте настройки API.",
-                reply_markup=get_main_keyboard(user_id, user_send_modes),
+                reply_markup=get_main_keyboard(
+                    user_id,
+                    user_send_modes,
+                    user_search_enabled.get(user_id, False),
+                    user_models.get(user_id, DEFAULT_MODEL),
+                ),
             )
 
     except IndexError:
@@ -716,7 +825,12 @@ def handle_generate_command(message):
         bot.reply_to(
             message,
             f"Произошла ошибка при генерации изображения: {e!s}",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id,
+                user_send_modes,
+                user_search_enabled.get(user_id, False),
+                user_models.get(user_id, DEFAULT_MODEL),
+            ),
         )
 
 
@@ -853,7 +967,12 @@ def handle_message(message):
             message,
             f"Произошла ошибка: {e!s}\n\nВозможно стоит "
             f"попробовать другую модель или начать новый чат.",
-            reply_markup=get_main_keyboard(user_id, user_send_modes),
+            reply_markup=get_main_keyboard(
+                user_id,
+                user_send_modes,
+                user_search_enabled.get(user_id, False),
+                user_models.get(user_id, DEFAULT_MODEL),
+            ),
         )
 
 
