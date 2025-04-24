@@ -5,12 +5,10 @@ import telebot
 from dotenv import load_dotenv
 from google import genai
 from PIL import Image
-from telebot import types
 from google.genai import types as genai_types
 from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
 
 from constants import (
-    AVAILABLE_MODELS,
     DEFAULT_MODEL,
     GEMINI_API_KEY,
     GREETING_MESSAGE_TEMPLATE,
@@ -22,6 +20,11 @@ from constants import (
     COMMAND_LIST,
 )
 from image_generation import generate_image_direct
+from keyboards import (
+    get_file_download_keyboard,
+    get_main_keyboard,
+    get_model_selection_keyboard,
+)
 from utils import markdown_to_text, split_long_message
 
 
@@ -41,34 +44,6 @@ user_send_modes = {}
 user_message_buffer = {}
 user_files_context = {}
 user_search_enabled = {}
-
-
-def get_main_keyboard(user_id):
-    """Создает основную клавиатуру."""
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(types.KeyboardButton("Новый чат"))
-    keyboard.add(
-        types.KeyboardButton("Выбрать модель"), types.KeyboardButton("/send_mode")
-    )
-    keyboard.add(types.KeyboardButton("Получить .MD"))
-
-    if user_send_modes.get(user_id, SEND_MODE_IMMEDIATE) == SEND_MODE_MANUAL:
-        keyboard.add(types.KeyboardButton("Отправить всё"))
-
-    return keyboard
-
-
-def get_model_selection_keyboard():
-    """Создает клавиатуру выбора модели."""
-    keyboard = types.InlineKeyboardMarkup()
-    for model_name in AVAILABLE_MODELS:
-        keyboard.add(
-            types.InlineKeyboardButton(
-                text=model_name,
-                callback_data=f"model_{model_name}",
-            ),
-        )
-    return keyboard
 
 
 def download_telegram_image(file_id):
@@ -117,7 +92,7 @@ def send_welcome(message):
     bot.send_message(
         message.chat.id,
         greeting_text,
-        reply_markup=get_main_keyboard(user_id),
+        reply_markup=get_main_keyboard(user_id, user_send_modes),
         parse_mode="Markdown",
     )
 
@@ -145,7 +120,7 @@ def new_chat(message):
         f"Текущая модель: {user_models[user_id]}\n"
         f"Режим отправки: {current_mode}\n"
         f"Поиск Google: {search_status}",
-        reply_markup=get_main_keyboard(user_id),
+        reply_markup=get_main_keyboard(user_id, user_send_modes),
     )
 
 
@@ -170,7 +145,7 @@ def get_response_as_md(message):
         bot.send_message(
             message.chat.id,
             "У меня нет сохраненных ответов для отправки в виде файла.",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
 
 
@@ -203,7 +178,7 @@ def handle_send_mode(message):
     bot.send_message(
         chat_id,
         mode_message,
-        reply_markup=get_main_keyboard(user_id),
+        reply_markup=get_main_keyboard(user_id, user_send_modes),
     )
 
 
@@ -222,7 +197,7 @@ def handle_search_command(message):
         message,
         f"🔎 Поиск Google теперь: *{search_status}*",
         parse_mode="Markdown",
-        reply_markup=get_main_keyboard(user_id),
+        reply_markup=get_main_keyboard(user_id, user_send_modes),
     )
 
 
@@ -248,7 +223,7 @@ def handle_send_all(message):
             message,
             f"Эта кнопка работает только в режиме '{SEND_MODE_MANUAL}'. "
             f"Ваш текущий режим: '{current_mode}'. Используйте /send_mode.",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
         return
 
@@ -258,7 +233,7 @@ def handle_send_all(message):
         bot.reply_to(
             message,
             "Буфер сообщений пуст. Нечего отправлять.",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
         return
 
@@ -266,7 +241,7 @@ def handle_send_all(message):
         bot.reply_to(
             message,
             "Ошибка: сессия чата не найдена. Пожалуйста, начните новый чат.",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
         user_message_buffer[user_id] = []
         return
@@ -320,7 +295,7 @@ def handle_send_all(message):
         bot.reply_to(
             message,
             "Не удалось сформировать сообщение для отправки из буфера (возможно, он пуст или содержит только пустые элементы).",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
         user_message_buffer[user_id] = []
         return
@@ -396,7 +371,7 @@ def handle_send_all(message):
             message,
             f"Произошла ошибка при отправке: {e!s}\n\n"
             "Ваши сообщения и фото сохранены в буфере. Попробуйте позже или измените содержимое буфера.",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
 
     except Exception as e:
@@ -408,20 +383,8 @@ def handle_send_all(message):
             message,
             f"Произошла ошибка при отправке: {e!s}\n\n"
             "Ваши сообщения и фото сохранены в буфере. Попробуйте позже или измените содержимое буфера.",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
-
-
-def get_file_download_keyboard(user_id):
-    """Создает инлайн клавиатуру для скачивания файла."""
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(
-        types.InlineKeyboardButton(
-            text="Получить в виде файла",
-            callback_data=f"get_file_{user_id}",
-        ),
-    )
-    return keyboard
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("get_file_"))
@@ -477,7 +440,7 @@ def handle_model_selection(call):
     bot.send_message(
         call.message.chat.id,
         "Можете начать новый диалог.",
-        reply_markup=get_main_keyboard(user_id),
+        reply_markup=get_main_keyboard(user_id, user_send_modes),
     )
 
 
@@ -498,7 +461,7 @@ def handle_document(message):
             chat_id,
             "Похоже, мы не общались раньше. Начинаю новый чат "
             f"с моделью: {user_models[user_id]}.",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
         if user_id not in user_chats:
             try:
@@ -520,7 +483,7 @@ def handle_document(message):
                     message,
                     f"❌ Файл '{message.document.file_name}' слишком большой "
                     f"(> {MAX_FILE_SIZE_MB} МБ). Я могу обрабатывать файлы размером до {MAX_FILE_SIZE_MB} МБ.",
-                    reply_markup=get_main_keyboard(user_id),
+                    reply_markup=get_main_keyboard(user_id, user_send_modes),
                 )
                 return
 
@@ -555,7 +518,7 @@ def handle_document(message):
                     + ("Подпись также добавлена.\n" if caption else "\n")
                     + f"Всего файлов в контексте: {context_count}.\n"
                     + "Нажмите 'Отправить всё', когда будете готовы.",
-                    reply_markup=get_main_keyboard(user_id),
+                    reply_markup=get_main_keyboard(user_id, user_send_modes),
                 )
             else:
                 file_type_short = doc_mime_type.split("/")[-1].upper()
@@ -563,14 +526,14 @@ def handle_document(message):
                     message,
                     f"✅ Файл '{filename}' ({file_type_short}) добавлен в контекст (всего: {context_count}). "
                     "Он будет автоматически использован при следующем текстовом запросе.",
-                    reply_markup=get_main_keyboard(user_id),
+                    reply_markup=get_main_keyboard(user_id, user_send_modes),
                 )
 
         except Exception as e:
             bot.reply_to(
                 message,
                 f"Не удалось обработать файл '{message.document.file_name}': {e!s}",
-                reply_markup=get_main_keyboard(user_id),
+                reply_markup=get_main_keyboard(user_id, user_send_modes),
             )
     else:
         supported_types_str = ", ".join(
@@ -585,7 +548,7 @@ def handle_document(message):
         bot.reply_to(
             message,
             f"Извините, я не могу обработать этот тип файла ({doc_mime_type}). \nПоддерживаемые типы: {supported_types_str}",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
 
 
@@ -605,7 +568,7 @@ def handle_photo(message):
             chat_id,
             "Похоже, мы не общались раньше. Начинаю новый чат "
             f"с моделью: {user_models[user_id]}.",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
 
         if user_id not in user_chats:
@@ -638,13 +601,13 @@ def handle_photo(message):
                 f"Фото добавлено в буфер ({buffer_count} шт.). "
                 + ("Подпись также добавлена.\n" if caption else "\n")
                 + "Нажмите 'Отправить всё', когда будете готовы.",
-                reply_markup=get_main_keyboard(user_id),
+                reply_markup=get_main_keyboard(user_id, user_send_modes),
             )
         except Exception as e:
             bot.reply_to(
                 message,
                 f"Не удалось добавить фото в буфер: {e!s}",
-                reply_markup=get_main_keyboard(user_id),
+                reply_markup=get_main_keyboard(user_id, user_send_modes),
             )
         return
 
@@ -657,7 +620,7 @@ def handle_photo(message):
             bot.reply_to(
                 message,
                 f"Не удалось инициализировать чат перед отправкой фото: {e!s}",
-                reply_markup=get_main_keyboard(user_id),
+                reply_markup=get_main_keyboard(user_id, user_send_modes),
             )
             return
 
@@ -699,7 +662,7 @@ def handle_photo(message):
             message,
             f"Произошла ошибка при обработке изображения ({user_models.get(user_id, 'неизвестно')}): {e!s}\n\n"
             "Возможно, стоит попробовать новый чат.",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
 
 
@@ -738,7 +701,7 @@ def handle_generate_command(message):
                 message,
                 "Не удалось сгенерировать изображение. Попробуйте "
                 "изменить запрос или проверьте настройки API.",
-                reply_markup=get_main_keyboard(user_id),
+                reply_markup=get_main_keyboard(user_id, user_send_modes),
             )
 
     except IndexError:
@@ -753,7 +716,7 @@ def handle_generate_command(message):
         bot.reply_to(
             message,
             f"Произошла ошибка при генерации изображения: {e!s}",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
 
 
@@ -890,7 +853,7 @@ def handle_message(message):
             message,
             f"Произошла ошибка: {e!s}\n\nВозможно стоит "
             f"попробовать другую модель или начать новый чат.",
-            reply_markup=get_main_keyboard(user_id),
+            reply_markup=get_main_keyboard(user_id, user_send_modes),
         )
 
 
