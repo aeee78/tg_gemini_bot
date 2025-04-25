@@ -8,13 +8,25 @@ from google.genai import types as genai_types
 from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 from PIL import Image
 
-from constants import (COMMAND_LIST, DEFAULT_MODEL, GEMINI_API_KEY,
-                       GREETING_MESSAGE_TEMPLATE, MAX_FILE_SIZE_MB,
-                       SEND_MODE_IMMEDIATE, SEND_MODE_MANUAL,
-                       SUPPORTED_MIME_TYPES, TELEGRAM_TOKEN, get_model_alias,)
+from constants import (
+    COMMAND_LIST,
+    DEFAULT_MODEL,
+    GEMINI_API_KEY,
+    GREETING_MESSAGE_TEMPLATE,
+    MAX_FILE_SIZE_MB,
+    QUICK_TOOLS_CONFIG,
+    SEND_MODE_IMMEDIATE,
+    SEND_MODE_MANUAL,
+    SUPPORTED_MIME_TYPES,
+    TELEGRAM_TOKEN,
+    get_model_alias,
+)
 from image_generation import generate_image_direct
-from keyboards import (get_file_download_keyboard, get_main_keyboard,
-                       get_model_selection_keyboard,)
+from keyboards import (
+    get_file_download_keyboard,
+    get_main_keyboard,
+    get_model_selection_keyboard,
+)
 from utils import markdown_to_text, split_long_message
 
 
@@ -22,10 +34,9 @@ load_dotenv()
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-try:
-    bot.set_my_commands(COMMAND_LIST)
-except Exception as e:
-    print(f"Error setting bot commands: {e}")
+
+bot.set_my_commands(COMMAND_LIST)
+
 
 user_chats = {}
 user_models = {}
@@ -823,9 +834,74 @@ def handle_generate_command(message):
         )
 
 
+@bot.message_handler(
+    func=lambda message: message.text
+    and message.text.startswith("/")
+    and message.text.split(" ", 1)[0][1:] in QUICK_TOOLS_CONFIG
+)
+def handle_quick_tool_command(message):
+    """Обрабатывает команды быстрых инструментов (напр., /translate, /prompt)."""
+    chat_id = message.chat.id
+    command_with_slash = message.text.split(" ", 1)[0]
+    command = command_with_slash[1:]
+    user_query = message.text.split(" ", 1)[1].strip() if " " in message.text else ""
+
+    if not user_query:
+        bot.reply_to(
+            message,
+            f"Пожалуйста, укажите текст после команды {command_with_slash}.\n"
+            f"Например: `{command_with_slash} ваш текст здесь`",
+            parse_mode="Markdown",
+        )
+        return
+
+    tool_config = QUICK_TOOLS_CONFIG[command]
+    system_instruction = tool_config["system_instruction"]
+    model_to_use = tool_config.get("model", DEFAULT_MODEL)
+
+    bot.send_chat_action(chat_id, "typing")
+    status_msg = bot.reply_to(message, f"Выполняю команду `{command_with_slash}`...")
+
+    try:
+        response = client.models.generate_content(
+            model=model_to_use,
+            contents=user_query,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=system_instruction
+            ),
+        )
+
+        raw_response_text = response.text
+
+        try:
+            bot.delete_message(chat_id, status_msg.message_id)
+        except Exception:
+            pass
+
+        plain_response_text = markdown_to_text(raw_response_text)
+        message_parts = split_long_message(plain_response_text)
+
+        for i, part in enumerate(message_parts):
+            if i == 0:
+                bot.reply_to(message, part)
+            else:
+                bot.send_message(chat_id, part)
+
+    except Exception as e:
+        try:
+            bot.delete_message(chat_id, status_msg.message_id)
+        except Exception:
+            pass
+        print(f"Error in quick tool command '{command}': {e}")
+        bot.reply_to(
+            message,
+            f"Произошла ошибка при выполнении команды `{command_with_slash}`: {e!s}",
+        )
+
+
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
-    """Обрабатывает текстовые сообщения."""
+    """Обрабатывает обычные текстовые сообщения (не команды инструментов)."""
     user_id = message.from_user.id
     chat_id = message.chat.id
     if user_id not in user_models:
