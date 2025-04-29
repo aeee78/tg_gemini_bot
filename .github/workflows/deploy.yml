@@ -28,7 +28,8 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << 'EOF'
             cd /home/tg_gemini_bot
-            source venv/bin/activate
-            pip install -r requirements.txt
+            uv venv
+            source .venv/bin/activate
+            uv pip install -r requirements.txt
             systemctl restart tg_gemini_bot.service
           EOF
