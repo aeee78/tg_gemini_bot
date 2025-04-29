@@ -2,7 +2,7 @@ import os
 
 from dotenv import load_dotenv
 from telebot.types import BotCommand
-
+from quick_tools_config import QUICK_TOOLS_CONFIG
 
 load_dotenv()
 
@@ -40,18 +40,6 @@ COMMAND_LIST = [
     BotCommand("generate", "🖼️ Сгенерировать изображение (напр. /generate кот)"),
 ]
 
-
-QUICK_TOOLS_CONFIG = {
-    "translate": {
-        "system_instruction": "You are a translator. Translate the following text. If it's in Russian, translate to English. If it's in other language, translate to Russian. Provide only the translated text without any additional comments or explanations.",
-        "description": "ru<>en Перевод текста",
-        "model": "gemini-2.0-flash",
-    },
-    "prompt": {
-        "system_instruction": "You are an expert prompt engineer. Improve the following user prompt to make it more effective for generating creative text or images with AI models. Focus on clarity, detail, and desired style. Provide only the improved prompt.",
-        "description": "✨ Улучшение промпта для AI",
-    },
-}
 
 for command_name, config in QUICK_TOOLS_CONFIG.items():
     COMMAND_LIST.append(BotCommand(f"/{command_name}", config["description"]))

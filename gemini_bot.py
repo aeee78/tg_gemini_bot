@@ -858,20 +858,30 @@ def handle_quick_tool_command(message):
     tool_config = QUICK_TOOLS_CONFIG[command]
     system_instruction = tool_config["system_instruction"]
     model_to_use = tool_config.get("model", DEFAULT_MODEL)
+    thinking_budget = tool_config.get("thinking_budget", None)
 
     bot.send_chat_action(chat_id, "typing")
     status_msg = bot.reply_to(message, f"Выполняю команду `{command_with_slash}`...")
 
     try:
+        config_kwargs = {"system_instruction": system_instruction}
+        if model_to_use == "gemini-2.5-pro-exp-03-25" and thinking_budget is not None:
+            config_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=thinking_budget)
+
         response = client.models.generate_content(
             model=model_to_use,
             contents=user_query,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=system_instruction
-            ),
+            config=genai_types.GenerateContentConfig(**config_kwargs),
         )
 
         raw_response_text = response.text
+
+        if command in ["todo", "markdown"]:
+            words = user_query.split()
+            filename_base = "_".join(words[:3]) if len(words) > 0 else command
+            filename = f"{filename_base}_{command}.md"
+            filename = filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+            send_text_as_file(chat_id, raw_response_text, filename)
 
         try:
             bot.delete_message(chat_id, status_msg.message_id)
