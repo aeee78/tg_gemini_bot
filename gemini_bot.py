@@ -78,7 +78,7 @@ def send_welcome(message):
     user_send_modes[user_id] = SEND_MODE_IMMEDIATE
     user_message_buffer[user_id] = []
     user_files_context[user_id] = []
-    user_search_enabled[user_id] = False
+    user_search_enabled[user_id] = True
 
     search_enabled = user_search_enabled[user_id]
     current_model = user_models[user_id]
