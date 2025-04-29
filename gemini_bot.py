@@ -866,7 +866,9 @@ def handle_quick_tool_command(message):
     try:
         config_kwargs = {"system_instruction": system_instruction}
         if model_to_use == "gemini-2.5-pro-exp-03-25" and thinking_budget is not None:
-            config_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=thinking_budget)
+            config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
+                thinking_budget=thinking_budget
+            )
 
         response = client.models.generate_content(
             model=model_to_use,
