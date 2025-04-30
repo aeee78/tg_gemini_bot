@@ -978,8 +978,7 @@ def handle_message(message):
         if user_id not in user_chats:
 
             try:
-                model = genai.GenerativeModel(model_name=user_models[user_id])
-                user_chats[user_id] = model.start_chat(history=[])
+                user_chats[user_id] = client.chats.create(model=user_models[user_id])
             except Exception as e:
                 bot.reply_to(
                     message, f"Ошибка инициализации чата перед отправкой: {e!s}"
