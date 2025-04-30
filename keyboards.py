@@ -57,8 +57,14 @@ def get_file_download_keyboard(user_id):
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(
         types.InlineKeyboardButton(
-            text="Получить в виде файла",
+            text="Скачать в формате .txt",
             callback_data=f"get_file_{user_id}",
+        )
+    )
+    keyboard.add(
+        types.InlineKeyboardButton(
+            text="Скачать в формате .md",
+            callback_data=f"get_md_{user_id}",
         ),
     )
     return keyboard

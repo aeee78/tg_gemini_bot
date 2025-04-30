@@ -18,9 +18,9 @@ QUICK_TOOLS_CONFIG = {
             "more effective for generating creative text or images with AI models. Focus on "
             "clarity, detail, and desired style. Provide only the improved prompt."
         ),
-        "description": "✨ Улучшение промпта для AI",
+        "description": "✨ Улучшение промпта (запроса) для AI",
     },
-    "prompt_pro": {
+    "promptpro": {
         "system_instruction": (
             "You are an expert prompt engineer. Thoroughly analyze and significantly improve "
             "the following user prompt for generating high-quality, creative text or images "
@@ -29,7 +29,7 @@ QUICK_TOOLS_CONFIG = {
             "the user's core intent. Provide only the improved prompt."
         ),
         "model": "gemini-2.5-pro-exp-03-25",
-        "description": "🚀 PRO Улучшение промпта для AI",
+        "description": "🚀 PRO Улучшение промпта (запроса) для AI",
     },
     "rewrite": {
         "system_instruction": (
@@ -42,7 +42,7 @@ QUICK_TOOLS_CONFIG = {
             "formal phrasing. Ensure the rewritten text maintains logical flow and coherence. "
             "Return only the rewritten text."
         ),
-        "description": "🎓 Переписать текст в академическом стиле (для диплома/курсовой)",
+        "description": "🎓 Переписать текст в академическом стиле (для диплома или курсовой)",
     },
     "simplify": {
         "system_instruction": (
@@ -97,7 +97,7 @@ QUICK_TOOLS_CONFIG = {
             "return the exact phrase: `Этот текст не подходит для преобразования в список.` "
             "Otherwise, return *only* the formatted list."
         ),
-        "description": "📋 Преобразовать текст в маркированный/нумерованный список",
+        "description": "📋 Преобразовать текст в маркированный или нумерованный список",
         "thinking_budget": 0,
     },
     "table": {
