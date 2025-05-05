@@ -28,6 +28,8 @@ from keyboards import (
     get_main_keyboard,
     get_model_selection_keyboard,
 )
+from functools import wraps
+
 from utils import markdown_to_text, split_long_message
 
 
@@ -46,6 +48,43 @@ user_send_modes = {}
 user_message_buffer = {}
 user_files_context = {}
 user_search_enabled = {}
+
+
+def ensure_user_started(func):
+    """Декоратор: проверяет, начал ли пользователь диалог командой /start."""
+
+    @wraps(func)
+    def wrapper(message, *args, **kwargs):
+        if isinstance(message, telebot.types.CallbackQuery):
+            user_id = message.from_user.id
+            chat_id = message.message.chat.id
+            is_callback = True
+        elif isinstance(message, telebot.types.Message):
+            user_id = message.from_user.id
+            chat_id = message.chat.id
+            is_callback = False
+        else:
+
+            print(
+                f"Предупреждение: ensure_user_started получил неожиданный тип: {type(message)}"
+            )
+            return func(message, *args, **kwargs)
+
+        if user_id not in user_models:
+            try:
+                if is_callback:
+                    bot.answer_callback_query(message.id)
+                bot.send_message(
+                    chat_id,
+                    "Пожалуйста, введите /start для начала работы.",
+                    reply_markup=telebot.types.ReplyKeyboardRemove(),
+                )
+            except Exception as e:
+                print(f"Ошибка при отправке сообщения 'введите /start': {e}")
+            return None
+        return func(message, *args, **kwargs)
+
+    return wrapper
 
 
 def download_telegram_image(file_id):
@@ -128,13 +167,10 @@ def send_welcome(message):
 
 
 @bot.message_handler(func=lambda message: message.text == "Новый чат")
+@ensure_user_started
 def new_chat(message):
     """Обрабатывает нажатие кнопки "Новый чат"."""
     user_id = message.from_user.id
-
-    if user_id not in user_models:
-        user_models[user_id] = DEFAULT_MODEL
-        user_search_enabled[user_id] = True
 
     user_chats[user_id] = client.chats.create(model=user_models[user_id])
     user_last_responses[user_id] = None
@@ -160,6 +196,7 @@ def new_chat(message):
 
 
 @bot.message_handler(func=lambda message: message.text.startswith("Получить ."))
+@ensure_user_started
 def get_response_as_md(message):
     """Обрабатывает нажатие кнопки "Получить .md 📄"."""
     user_id = message.from_user.id
@@ -187,6 +224,7 @@ def get_response_as_md(message):
 
 
 @bot.message_handler(func=lambda message: message.text.startswith("Режим:"))
+@ensure_user_started
 def handle_send_mode(message):
     """Переключает режим отправки сообщений."""
     user_id = message.from_user.id
@@ -223,12 +261,10 @@ def handle_send_mode(message):
 
 
 @bot.message_handler(func=lambda message: message.text.startswith("Поиск:"))
+@ensure_user_started
 def handle_search_command(message):
     """Переключает режим поиска Google."""
     user_id = message.from_user.id
-
-    if user_id not in user_search_enabled:
-        user_search_enabled[user_id] = False
 
     user_search_enabled[user_id] = not user_search_enabled[user_id]
 
@@ -246,6 +282,7 @@ def handle_search_command(message):
 
 
 @bot.message_handler(func=lambda message: message.text.startswith("Модель:"))
+@ensure_user_started
 def select_model(message):
     """Обрабатывает нажатие кнопки "Выбрать модель"."""
     bot.send_message(
@@ -256,6 +293,7 @@ def select_model(message):
 
 
 @bot.message_handler(func=lambda message: message.text == "Отправить всё")
+@ensure_user_started
 def handle_send_all(message):
     """Отправляет накопленные сообщения (текст и фото) из буфера, сохраняя разрывы между текстами."""
     user_id = message.from_user.id
@@ -461,8 +499,10 @@ def handle_send_all(message):
     func=lambda call: call.data.startswith("get_file_")
     or call.data.startswith("get_md_")
 )
+@ensure_user_started
 def handle_get_file(call):
     """Обрабатывает нажатие инлайн кнопок "Получить в виде файла" (.txt или .md)."""
+
     user_id = int(call.data.split("_")[2])
     file_format = "txt" if call.data.startswith("get_file_") else "md"
 
@@ -498,6 +538,7 @@ def handle_get_file(call):
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("model_"))
+@ensure_user_started
 def handle_model_selection(call):
     """Обрабатывает нажатия кнопок выбора модели."""
     user_id = call.from_user.id
@@ -532,37 +573,11 @@ def handle_model_selection(call):
 
 
 @bot.message_handler(content_types=["document"])
+@ensure_user_started
 def handle_document(message):
     """Обрабатывает входящие документы поддерживаемых типов, сохраняя их в контекст."""
     user_id = message.from_user.id
     chat_id = message.chat.id
-
-    if user_id not in user_models:
-        user_models[user_id] = DEFAULT_MODEL
-        user_send_modes[user_id] = SEND_MODE_IMMEDIATE
-        user_message_buffer[user_id] = []
-        user_files_context[user_id] = []
-        user_last_responses[user_id] = None
-        user_search_enabled[user_id] = False
-        bot.send_message(
-            chat_id,
-            "Похоже, мы не общались раньше. Начинаю новый чат "
-            f"с моделью: {user_models[user_id]}.",
-            reply_markup=get_main_keyboard(
-                user_id,
-                user_send_modes,
-                user_search_enabled[user_id],
-                user_models[user_id],
-            ),
-        )
-        if user_id not in user_chats:
-            try:
-                user_chats[user_id] = client.chats.create(model=user_models[user_id])
-            except Exception as e:
-                bot.reply_to(
-                    message, f"Ошибка инициализации чата при первом документе: {e!s}"
-                )
-                return
 
     doc_mime_type = message.document.mime_type
     if doc_mime_type in SUPPORTED_MIME_TYPES:
@@ -670,37 +685,11 @@ def handle_document(message):
 
 
 @bot.message_handler(content_types=["photo"])
+@ensure_user_started
 def handle_photo(message):
     """Обрабатывает сообщения с фотографиями в зависимости от режима."""
     user_id = message.from_user.id
     chat_id = message.chat.id
-
-    if user_id not in user_models:
-        user_models[user_id] = DEFAULT_MODEL
-        user_send_modes[user_id] = SEND_MODE_IMMEDIATE
-        user_message_buffer[user_id] = []
-        user_last_responses[user_id] = None
-        user_search_enabled[user_id] = False
-        bot.send_message(
-            chat_id,
-            "Похоже, мы не общались раньше. Начинаю новый чат "
-            f"с моделью: {user_models[user_id]}.",
-            reply_markup=get_main_keyboard(
-                user_id,
-                user_send_modes,
-                user_search_enabled[user_id],
-                user_models[user_id],
-            ),
-        )
-
-        if user_id not in user_chats:
-            try:
-                user_chats[user_id] = client.chats.create(model=user_models[user_id])
-            except Exception as e:
-                bot.reply_to(
-                    message, f"Ошибка инициализации чата при первом фото: {e!s}"
-                )
-                return
 
     current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
 
@@ -808,8 +797,11 @@ def handle_photo(message):
 
 
 @bot.message_handler(commands=["generate"])
+@ensure_user_started
 def handle_generate_command(message):
     """Обрабатывает команду /generate для создания изображений."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
     try:
 
         prompt = message.text.split("/generate", 1)[1].strip()
@@ -822,13 +814,17 @@ def handle_generate_command(message):
             )
             return
 
-        user_id = message.from_user.id
-        chat_id = message.chat.id
-
         bot.send_chat_action(chat_id, "upload_photo")
-        bot.reply_to(message, f'Генерирую изображение по запросу: "{prompt}"...')
+        status_msg = bot.reply_to(
+            message, f'Генерирую изображение по запросу: "{prompt}"...'
+        )
 
         image_stream = generate_image_direct(prompt)
+
+        try:
+            bot.delete_message(chat_id, status_msg.message_id)
+        except Exception:
+            pass
 
         if image_stream:
             bot.send_photo(
@@ -876,8 +872,10 @@ def handle_generate_command(message):
     and message.text.startswith("/")
     and message.text.split(" ", 1)[0][1:] in QUICK_TOOLS_CONFIG
 )
+@ensure_user_started
 def handle_quick_tool_command(message):
     """Обрабатывает команды быстрых инструментов (напр., /translate, /prompt)."""
+    user_id = message.from_user.id
     chat_id = message.chat.id
     command_with_slash = message.text.split(" ", 1)[0]
     command = command_with_slash[1:]
@@ -949,22 +947,11 @@ def handle_quick_tool_command(message):
 
 
 @bot.message_handler(func=lambda message: True)
+@ensure_user_started
 def handle_message(message):
     """Обрабатывает обычные текстовые сообщения (не команды инструментов)."""
     user_id = message.from_user.id
     chat_id = message.chat.id
-    if user_id not in user_models:
-        user_models[user_id] = DEFAULT_MODEL
-        user_send_modes[user_id] = SEND_MODE_IMMEDIATE
-        user_message_buffer[user_id] = []
-        user_last_responses[user_id] = None
-        user_search_enabled[user_id] = False
-
-        try:
-            pass
-
-        except Exception as e:
-            bot.reply_to(message, f"Ошибка инициализации при первом сообщении: {e!s}")
 
     current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
 
