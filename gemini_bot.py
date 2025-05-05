@@ -134,7 +134,7 @@ def new_chat(message):
 
     if user_id not in user_models:
         user_models[user_id] = DEFAULT_MODEL
-        user_search_enabled[user_id] = False
+        user_search_enabled[user_id] = True
 
     user_chats[user_id] = client.chats.create(model=user_models[user_id])
     user_last_responses[user_id] = None
