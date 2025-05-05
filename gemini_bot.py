@@ -19,6 +19,7 @@ from constants import (
     SEND_MODE_MANUAL,
     SUPPORTED_MIME_TYPES,
     TELEGRAM_TOKEN,
+    HELP_TEXT_TEMPLATE,
     get_model_alias,
 )
 from image_generation import generate_image_direct
@@ -71,38 +72,12 @@ def send_text_as_file(chat_id, text, filename="response.txt"):
 @bot.message_handler(commands=["help"])
 def handle_help_command(message):
     """Выводит подробную справку по функциям бота."""
-    help_text = "ℹ️ *Справка по возможностям бота*\n\n"
-
-    help_text += "*Основной чат:*\n"
-    help_text += "- Просто пишите мне, я помню контекст нашего диалога.\n"
-    help_text += "- *Новый чат:* Начинает новый диалог, очищая весь предыдущий контекст (сообщения, файлы).\n"
-    help_text += "- *Модель:* Позволяет выбрать ИИ-модель Gemini. Смена модели начинает новый чат.\n"
-    help_text += "- *Поиск:* Включает/выключает поиск Google для более точных и актуальных ответов со ссылками на источники.\n\n"
-
-    help_text += "*Работа с файлами:*\n"
-    help_text += f"- Отправляйте фото (я опишу или учту) или документы (PDF, TXT, код и др., до {MAX_FILE_SIZE_MB} МБ).\n"
-    help_text += (
-        "- Файлы добавляются в контекст *текущего чата* до его очистки ('Новый чат').\n"
+    help_text = HELP_TEXT_TEMPLATE.format(
+        MAX_FILE_SIZE_MB=MAX_FILE_SIZE_MB,
+        SEND_MODE_IMMEDIATE=SEND_MODE_IMMEDIATE,
+        SEND_MODE_MANUAL=SEND_MODE_MANUAL,
     )
-    help_text += "- *В Мгновенном режиме:* Файлы из контекста автоматически прикрепляются к вашему *следующему текстовому* запросу.\n"
-    help_text += "- *В Ручном режиме:* Файлы добавляются в буфер вместе с текстом/фото и отправляются все вместе по кнопке 'Отправить всё'.\n\n"
 
-    help_text += "*Режимы отправки (кнопка 'Режим:'):*\n"
-    help_text += f"- *{SEND_MODE_IMMEDIATE}:* Ваше сообщение/фото/файл отправляется *сразу*. Удобно для быстрых вопросов и ответов.\n"
-    help_text += f"- *{SEND_MODE_MANUAL}:* Сообщения/фото/файлы *накапливаются* в буфере. Используйте эту опцию, чтобы:\n"
-    help_text += "    - Отправить очень длинный текст, который не помещается в одно сообщение Telegram.\n"
-    help_text += "    - Скомбинировать несколько фото, файлов и текстовых описаний в *один* запрос к Gemini.\n"
-    help_text += "- *Отправить всё:* (Только в Ручном режиме) Отправляет всё содержимое буфера в Gemini.\n\n"
-
-    help_text += "*Скачивание ответов:*\n"
-    help_text += "- *Скачать .md:* (Кнопка на клавиатуре) Скачать *последний* ответ бота в формате Markdown (с форматированием заголовков, списков и т.д.).\n"
-    help_text += "- *Скачать в формате .txt:* (Кнопка под сообщением, если ответ был разбит) Скачать полный текст ответа без Markdown-разметки.\n\n"
-
-    help_text += "*Генерация изображений:*\n"
-    help_text += "- `/generate <запрос>`: Создает изображение по вашему описанию (например, `/generate space dog`). Этот запрос не влияет на основной чат. Лучше делать запросы на английском\n\n"
-
-    help_text += "*Быстрые инструменты (Команды):*\n"
-    help_text += "- Эти команды выполняют *одноразовые* задачи и не влияют на контекст вашего основного чата.\n"
     for command_info in COMMAND_LIST:
         if command_info.command not in ["/start", "/generate"]:
             example = ""
@@ -159,6 +134,7 @@ def new_chat(message):
 
     if user_id not in user_models:
         user_models[user_id] = DEFAULT_MODEL
+        user_search_enabled[user_id] = False
 
     user_chats[user_id] = client.chats.create(model=user_models[user_id])
     user_last_responses[user_id] = None

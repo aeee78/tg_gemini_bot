@@ -41,6 +41,7 @@ QUICK_TOOLS_CONFIG = {
             "abbreviations, and personal pronouns ('I', 'we'). Use precise terminology and "
             "formal phrasing. Ensure the rewritten text maintains logical flow and coherence. "
             "Return only the rewritten text."
+            "If the text is not suitable for rewriting, return the exact phrase: `Этот текст не подходит для переписывания.` "
         ),
         "description": "🎓 Переписать текст в академическом стиле (для диплома или курсовой)",
     },
@@ -123,6 +124,8 @@ QUICK_TOOLS_CONFIG = {
             "be a separate list item. The format for each item is: `- [ ] Task description`. "
             "The checkbox `[ ]` must be *empty* for every item. Return *only* this formatted "
             "list of tasks, without any introductory or concluding phrases."
+            "If the text does not contain information that can be reasonably structured into a "
+            "table, return the exact phrase: `Этот текст не подходит для представления в виде списка задач.` "
         ),
         "description": "☑️ Создать список задач (todo list) из текста",
         "thinking_budget": 0,
