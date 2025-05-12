@@ -239,6 +239,6 @@ QUICK_TOOLS_CONFIG = {
             "This is a single-turn interaction. Process the user's request and provide the schedule in the user's language. Provide ONLY the schedule."
         ),
         "description": "📅 Умный планировщик дня (задачи, еда)",
-        "model": "gemini-2.5-pro-exp-03-25",
+        "model": "gemini-2.5-pro-exp-03-25", 
     },
 }
