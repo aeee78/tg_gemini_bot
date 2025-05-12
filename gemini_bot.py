@@ -913,7 +913,7 @@ def handle_quick_tool_command(message):
 
         raw_response_text = response.text
 
-        if command in ["todo", "markdown"]:
+        if command in ["todo", "markdown", "dayplanner"]:
             words = user_query.split()
             filename_base = "_".join(words[:3]) if len(words) > 0 else command
             filename = f"{filename_base}_{command}.md"
