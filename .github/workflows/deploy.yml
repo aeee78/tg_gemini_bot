@@ -16,20 +16,82 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      - name: Copy project files to server
+      - name: Create project directory on server and copy files
         run: |
+          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} "mkdir -p /home/tg_gemini_bot"
           rsync -avz --delete \
             --exclude 'venv/' \
             --exclude '.venv/' \
             --exclude '.env' \
-            -e "ssh -o StrictHostKeyChecking=no" . root@${{ secrets.SERVER_IP }}:/home/tg_gemini_bot
+            --exclude '.git/' \
+            --exclude '.github/' \
+            -e "ssh -o StrictHostKeyChecking=no" . root@${{ secrets.SERVER_IP }}:/home/tg_gemini_bot/
 
-      - name: Deploy on server
+      - name: Deploy and Run Application on Server
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
         run: |
-          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << 'EOF'
-            cd /home/tg_gemini_bot
-            uv venv
+          ssh -o StrictHostKeyChecking=no root@${SERVER_IP} << 'EOF'
+            set -e
+
+            PROJECT_DIR="/home/tg_gemini_bot"
+            PYTHON_VERSION="python3.13"
+            SERVICE_NAME="tg_gemini_bot.service"
+
+            echo "--- Updating package list and installing dependencies ---"
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -y
+            apt-get install -y rsync ${PYTHON_VERSION}-venv curl sudo git
+
+            echo "--- Installing/Updating uv ---"
+            if ! command -v /root/.cargo/bin/uv &> /dev/null; then
+              echo "uv not found, installing..."
+              curl -LsSf https://astral.sh/uv/install.sh | sh
+              if [ -f /root/.cargo/env ]; then
+                source /root/.cargo/env
+              else
+                echo "Warning: /root/.cargo/env not found. uv might not be in PATH."
+                export PATH="/root/.cargo/bin:$PATH"
+              fi
+            else
+              echo "uv is already installed."
+              if [ -f /root/.cargo/env ]; then
+                source /root/.cargo/env
+              elif [[ ":$PATH:" != *":/root/.cargo/bin:"* ]]; then
+                 export PATH="/root/.cargo/bin:$PATH"
+              fi
+            fi
+
+            if ! command -v uv &> /dev/null; then
+               echo "ERROR: uv command still not found after attempting install/sourcing. Check PATH."
+               echo "Current PATH: $PATH"
+               exit 1
+            fi
+            echo "uv version: $(uv --version)"
+
+            echo "--- Navigating to project directory: $PROJECT_DIR ---"
+            cd $PROJECT_DIR
+
+            echo "--- Setting up Python virtual environment with uv ---"
+            uv venv --python $PYTHON_VERSION .venv
+
+            echo "--- Activating virtual environment ---"
             source .venv/bin/activate
+
+            echo "--- Installing Python dependencies ---"
             uv pip install -r requirements.txt
-            systemctl restart tg_gemini_bot.service
+
+            echo "--- Managing systemd service ---"
+            echo "IMPORTANT: Assuming $SERVICE_NAME is already present in /etc/systemd/system/"
+
+            echo "--- Reloading systemd, enabling and restarting service ---"
+            systemctl daemon-reload
+            systemctl enable $SERVICE_NAME
+            systemctl restart $SERVICE_NAME
+
+            echo "--- Checking service status ---"
+            sleep 5
+            systemctl status $SERVICE_NAME --no-pager || echo "Warning: Service status check indicated an issue. Please check logs on the server: journalctl -u $SERVICE_NAME -f"
+
+            echo "--- Deployment finished successfully! ---"
           EOF
