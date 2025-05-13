@@ -32,11 +32,14 @@ jobs:
           SERVER_IP: ${{ secrets.SERVER_IP }}
         run: |
           ssh -o StrictHostKeyChecking=no root@${SERVER_IP} << 'EOF'
-            set -e
+            set -e 
 
             PROJECT_DIR="/home/tg_gemini_bot"
-            PYTHON_VERSION="python3.13"
+            PYTHON_VERSION="python3.13" 
             SERVICE_NAME="tg_gemini_bot.service"
+            UV_INSTALL_PARENT_DIR="$HOME/.local"
+            UV_BIN_DIR="$UV_INSTALL_PARENT_DIR/bin"
+            UV_ENV_FILE="$UV_BIN_DIR/env" 
 
             echo "--- Updating package list and installing dependencies ---"
             export DEBIAN_FRONTEND=noninteractive
@@ -44,27 +47,45 @@ jobs:
             apt-get install -y rsync ${PYTHON_VERSION}-venv curl sudo git
 
             echo "--- Installing/Updating uv ---"
-            if ! command -v /root/.cargo/bin/uv &> /dev/null; then
+            if ! [ -x "$UV_BIN_DIR/uv" ] && ! command -v uv &> /dev/null; then
               echo "uv not found, installing..."
               curl -LsSf https://astral.sh/uv/install.sh | sh
-              if [ -f /root/.cargo/env ]; then
-                source /root/.cargo/env
+         
+              if [ -f "$UV_ENV_FILE" ]; then
+                echo "Sourcing $UV_ENV_FILE to add uv to PATH."
+                source "$UV_ENV_FILE"
+              elif [ -d "$UV_BIN_DIR" ]; then
+                echo "File $UV_ENV_FILE not found, but $UV_BIN_DIR exists. Adding $UV_BIN_DIR to PATH manually."
+                export PATH="$UV_BIN_DIR:$PATH"
               else
-                echo "Warning: /root/.cargo/env not found. uv might not be in PATH."
-                export PATH="/root/.cargo/bin:$PATH"
+                echo "Warning: uv installation might have failed or $UV_BIN_DIR was not created."
               fi
             else
-              echo "uv is already installed."
-              if [ -f /root/.cargo/env ]; then
-                source /root/.cargo/env
-              elif [[ ":$PATH:" != *":/root/.cargo/bin:"* ]]; then
-                 export PATH="/root/.cargo/bin:$PATH"
+              echo "uv is already installed or in PATH."
+
+              if [ -f "$UV_ENV_FILE" ] && [[ ":$PATH:" != *":$UV_BIN_DIR:"* ]]; then
+                echo "Sourcing $UV_ENV_FILE to ensure uv from $UV_BIN_DIR is in PATH."
+                source "$UV_ENV_FILE"
+              elif [ -d "$UV_BIN_DIR" ] && [[ ":$PATH:" != *":$UV_BIN_DIR:"* ]]; then
+                 echo "Adding $UV_BIN_DIR to PATH as it's not present."
+                 export PATH="$UV_BIN_DIR:$PATH"
               fi
             fi
 
+
             if ! command -v uv &> /dev/null; then
-               echo "ERROR: uv command still not found after attempting install/sourcing. Check PATH."
+               echo "ERROR: uv command still not found after attempting install/sourcing."
                echo "Current PATH: $PATH"
+               echo "Expected uv in: $UV_BIN_DIR"
+
+               if [ -d "$UV_BIN_DIR" ]; then
+                 echo "Contents of $UV_BIN_DIR:"
+                 ls -la "$UV_BIN_DIR"
+               fi
+               if [ -d "$HOME/.cargo/bin" ]; then 
+                 echo "Contents of $HOME/.cargo/bin:"
+                 ls -la "$HOME/.cargo/bin"
+               fi
                exit 1
             fi
             echo "uv version: $(uv --version)"
@@ -83,14 +104,14 @@ jobs:
 
             echo "--- Managing systemd service ---"
             echo "IMPORTANT: Assuming $SERVICE_NAME is already present in /etc/systemd/system/"
-
+            
             echo "--- Reloading systemd, enabling and restarting service ---"
             systemctl daemon-reload
             systemctl enable $SERVICE_NAME
             systemctl restart $SERVICE_NAME
 
             echo "--- Checking service status ---"
-            sleep 5
+            sleep 5 
             systemctl status $SERVICE_NAME --no-pager || echo "Warning: Service status check indicated an issue. Please check logs on the server: journalctl -u $SERVICE_NAME -f"
 
             echo "--- Deployment finished successfully! ---"
