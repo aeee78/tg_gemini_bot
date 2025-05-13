@@ -12,6 +12,7 @@ from constants import (
     COMMAND_LIST,
     DEFAULT_MODEL,
     GEMINI_API_KEY,
+    PRO_CODE,
     GREETING_MESSAGE_TEMPLATE,
     MAX_FILE_SIZE_MB,
     QUICK_TOOLS_CONFIG,
@@ -49,6 +50,37 @@ user_message_buffer = {}
 user_files_context = {}
 user_search_enabled = {}
 
+WHITELIST_FILE = "whitelist.txt"
+whitelisted_users = set()
+
+def load_whitelist():
+    """Загружает белый список пользователей из файла"""
+    try:
+        with open(WHITELIST_FILE, "r") as f:
+            for line in f:
+                user_id = line.strip()
+                if user_id:
+                    whitelisted_users.add(int(user_id))
+        print(f"Loaded {len(whitelisted_users)} users into whitelist.")
+    except FileNotFoundError:
+        print(f"Whitelist file '{WHITELIST_FILE}' not found. Starting with empty whitelist.")
+    except Exception as e:
+        print(f"Error loading whitelist: {e}")
+
+def add_to_whitelist(user_id):
+    """Добавляет пользователя в белый список."""
+    if user_id not in whitelisted_users:
+        try:
+            with open(WHITELIST_FILE, "a") as f:
+                f.write(f"{user_id}\n")
+            whitelisted_users.add(user_id)
+            print(f"Added user {user_id} to whitelist.")
+        except Exception as e:
+            print(f"Error adding user {user_id} to whitelist: {e}")
+
+def is_whitelisted(user_id):
+    """Checks if a user ID is in the whitelist."""
+    return user_id in whitelisted_users
 
 def ensure_user_started(func):
     """Декоратор: проверяет, начал ли пользователь диалог командой /start."""
@@ -131,6 +163,20 @@ def handle_help_command(message):
 
     bot.send_message(message.chat.id, help_text, parse_mode="Markdown")
 
+
+@bot.message_handler(commands=["unlock_pro"])
+@ensure_user_started
+def handle_unlock_pro(message):
+    """Обрабатывает команду /unlock_pro."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    command_parts = message.text.split(" ", 1)
+
+    if len(command_parts) == 2 and command_parts[1].strip() == str(PRO_CODE):
+        add_to_whitelist(user_id)
+        bot.reply_to(message, "✅ Доступ к про модели разблокирован!")
+    else:
+        bot.reply_to(message, "❌ Неверный код. Используйте другой")
 
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
@@ -543,6 +589,22 @@ def handle_model_selection(call):
     """Обрабатывает нажатия кнопок выбора модели."""
     user_id = call.from_user.id
     selected_model = call.data.replace("model_", "")
+
+    PRO_MODEL_NAME = "gemini-2.5-pro-exp-03-25"
+
+    if selected_model == PRO_MODEL_NAME and not is_whitelisted(user_id):
+        bot.answer_callback_query(call.id, text="Доступ к про модели ограничен. Используйте /unlock_pro <Имя создателя бота>")
+        bot.send_message(
+            call.message.chat.id,
+            "Доступ к про модели ограничен. Пожалуйста, используйте команду /unlock_pro <Имя создателя бота> для разблокировки.",
+            reply_markup=get_main_keyboard(
+                user_id,
+                user_send_modes,
+                user_search_enabled.get(user_id, False),
+                user_models.get(user_id, DEFAULT_MODEL),
+            ),
+        )
+        return
 
     user_models[user_id] = selected_model
 
@@ -1077,4 +1139,5 @@ def handle_message(message):
 
 
 if __name__ == "__main__":
+    load_whitelist()
     bot.polling(none_stop=True)

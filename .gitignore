@@ -8,6 +8,7 @@ __pycache__/
 pre-commit
 .pre-commit-config.yaml
 fullcode.txt
+whitelist.txt
 
 # C extensions
 *.so

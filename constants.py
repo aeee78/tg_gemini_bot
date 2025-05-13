@@ -8,6 +8,7 @@ load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+PRO_CODE = os.getenv("PRO_CODE")
 
 
 MAX_MESSAGE_LENGTH = 4000
