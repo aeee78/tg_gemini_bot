@@ -13,7 +13,7 @@ PRO_CODE = os.getenv("PRO_CODE")
 
 MAX_MESSAGE_LENGTH = 4000
 
-MAX_FILE_SIZE_MB = 19
+MAX_FILE_SIZE_MB = 20
 
 DEFAULT_MODEL = "gemini-2.5-flash-preview-04-17"
 
@@ -27,7 +27,7 @@ AVAILABLE_MODELS = [
 MODEL_ALIASES = {
     "gemini-2.5-flash-preview-04-17": "2.5 Flash 🚀",
     "gemini-2.5-pro-preview-05-06": "2.5 Pro💡",
-    "gemini-2.0-flash": "2.0 Flash",
+    "gemini-2.0-flash": "2.0 Flash❓",
 }
 
 
