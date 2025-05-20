@@ -7,6 +7,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      TARGET_SERVER_IP: ${{ secrets.SERVER_IP }}
+      TARGET_SERVER_SSH_PORT_FROM_SECRET: ${{ secrets.SERVER_SSH_PORT }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -18,7 +22,10 @@ jobs:
 
       - name: Create project directory on server and copy files
         run: |
-          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} "mkdir -p /home/tg_gemini_bot"
+          EFFECTIVE_SSH_PORT=${TARGET_SERVER_SSH_PORT_FROM_SECRET:-22}
+          echo "Using SSH Port: $EFFECTIVE_SSH_PORT"
+
+          ssh -p "$EFFECTIVE_SSH_PORT" -o StrictHostKeyChecking=no root@$TARGET_SERVER_IP "mkdir -p /home/tg_gemini_bot"
           rsync -avz --delete \
             --exclude 'venv/' \
             --exclude '.venv/' \
@@ -26,21 +33,22 @@ jobs:
             --exclude '.git/' \
             --exclude '.github/' \
             --exclude 'whitelist.txt' \
-            -e "ssh -o StrictHostKeyChecking=no" . root@${{ secrets.SERVER_IP }}:/home/tg_gemini_bot/
+            -e "ssh -p \"$EFFECTIVE_SSH_PORT\" -o StrictHostKeyChecking=no" . root@$TARGET_SERVER_IP:/home/tg_gemini_bot/
 
       - name: Deploy and Run Application on Server
-        env:
-          SERVER_IP: ${{ secrets.SERVER_IP }}
         run: |
-          ssh -o StrictHostKeyChecking=no root@${SERVER_IP} << 'EOF'
-            set -e 
+          EFFECTIVE_SSH_PORT=${TARGET_SERVER_SSH_PORT_FROM_SECRET:-22}
+          echo "Using SSH Port for deployment script: $EFFECTIVE_SSH_PORT"
+
+          ssh -p "$EFFECTIVE_SSH_PORT" -o StrictHostKeyChecking=no root@$TARGET_SERVER_IP << 'EOF'
+            set -e
 
             PROJECT_DIR="/home/tg_gemini_bot"
-            PYTHON_VERSION="python3.13" 
+            PYTHON_VERSION="python3.13"
             SERVICE_NAME="tg_gemini_bot.service"
             UV_INSTALL_PARENT_DIR="$HOME/.local"
             UV_BIN_DIR="$UV_INSTALL_PARENT_DIR/bin"
-            UV_ENV_FILE="$UV_BIN_DIR/env" 
+            UV_ENV_FILE="$UV_BIN_DIR/env"
 
             echo "--- Updating package list and installing dependencies ---"
             export DEBIAN_FRONTEND=noninteractive
@@ -51,7 +59,7 @@ jobs:
             if ! [ -x "$UV_BIN_DIR/uv" ] && ! command -v uv &> /dev/null; then
               echo "uv not found, installing..."
               curl -LsSf https://astral.sh/uv/install.sh | sh
-         
+
               if [ -f "$UV_ENV_FILE" ]; then
                 echo "Sourcing $UV_ENV_FILE to add uv to PATH."
                 source "$UV_ENV_FILE"
@@ -83,7 +91,7 @@ jobs:
                  echo "Contents of $UV_BIN_DIR:"
                  ls -la "$UV_BIN_DIR"
                fi
-               if [ -d "$HOME/.cargo/bin" ]; then 
+               if [ -d "$HOME/.cargo/bin" ]; then
                  echo "Contents of $HOME/.cargo/bin:"
                  ls -la "$HOME/.cargo/bin"
                fi
@@ -105,14 +113,14 @@ jobs:
 
             echo "--- Managing systemd service ---"
             echo "IMPORTANT: Assuming $SERVICE_NAME is already present in /etc/systemd/system/"
-            
+
             echo "--- Reloading systemd, enabling and restarting service ---"
             systemctl daemon-reload
             systemctl enable $SERVICE_NAME
             systemctl restart $SERVICE_NAME
 
             echo "--- Checking service status ---"
-            sleep 5 
+            sleep 5
             systemctl status $SERVICE_NAME --no-pager || echo "Warning: Service status check indicated an issue. Please check logs on the server: journalctl -u $SERVICE_NAME -f"
 
             echo "--- Deployment finished successfully! ---"

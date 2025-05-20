@@ -120,7 +120,7 @@
         *   Устанавливает зависимости из `requirements.txt` с помощью `uv pip install`.
         *   Перезапускает сервис `systemd` (например, `tg_gemini_bot.service`), который должен быть предварительно настроен на сервере для запуска бота.
 
--   **Необходимые секреты GitHub Actions:** `SERVER_SSH_KEY` (приватный SSH ключ) и `SERVER_IP` (IP адрес сервера).
+-   **Необходимые секреты GitHub Actions:** `SERVER_SSH_KEY` (приватный SSH ключ), `SERVER_IP` (IP адрес сервера) и SERVER_SSH_PORT (опционально): SSH порт вашего сервера, если он отличается от стандартного порта 22. Если этот секрет не указан или пуст, будет использован порт 22.
 
 -   **Важные примечания:**
     *   **Systemd сервис:** Файл сервиса (например, `tg_gemini_bot.service`) должен быть заранее создан в `/etc/systemd/system/` и настроен для запуска `gemini_bot.py` из виртуального окружения.
@@ -253,7 +253,7 @@ The project is configured for automatic deployment to a server (Debian/Ubuntu-ba
         *   Installs dependencies from `requirements.txt` using `uv pip install`.
         *   Restarts the `systemd` service (e.g., `tg_gemini_bot.service`), which must be pre-configured on the server to run the bot.
 
--   **Required GitHub Actions Secrets:** `SERVER_SSH_KEY` (private SSH key) and `SERVER_IP` (server IP address).
+-   **Required GitHub Actions Secrets:** `SERVER_SSH_KEY` (private SSH key), `SERVER_IP` (server IP address) and SERVER_SSH_PORT (optional): The SSH port of your server if it differs from the default port 22. If this secret is not provided or is empty, port 22 will be used.
 
 -   **Important Notes:**
     *   **Systemd service:** The service file (e.g., `tg_gemini_bot.service`) must be created in `/etc/systemd/system/` beforehand and configured to run `gemini_bot.py` from the virtual environment.
