@@ -15,17 +15,17 @@ MAX_MESSAGE_LENGTH = 4000
 
 MAX_FILE_SIZE_MB = 20
 
-DEFAULT_MODEL = "gemini-2.5-flash-preview-04-17"
+DEFAULT_MODEL = "gemini-2.5-flash-preview-05-20"
 
 AVAILABLE_MODELS = [
-    "gemini-2.5-flash-preview-04-17",
+    "gemini-2.5-flash-preview-05-20",
     "gemini-2.5-pro-preview-05-06",
     "gemini-2.0-flash",
 ]
 
 
 MODEL_ALIASES = {
-    "gemini-2.5-flash-preview-04-17": "2.5 Flash 🚀",
+    "gemini-2.5-flash-preview-05-20": "2.5 Flash 🚀",
     "gemini-2.5-pro-preview-05-06": "2.5 Pro💡",
     "gemini-2.0-flash": "2.0 Flash❓",
 }

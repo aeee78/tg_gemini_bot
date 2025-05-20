@@ -18,7 +18,7 @@
 
 -   **Интеллектуальный чат:** Бот поддерживает контекст разговора для естественного общения.
 -   **Поддержка нескольких моделей Gemini:** Выбирайте оптимальную модель для ваших задач:
-    -   `2.5 Flash 🚀` (`gemini-2.5-flash-preview-04-17`)
+    -   `2.5 Flash 🚀` (`gemini-2.5-flash-preview-05-20`)
     -   `2.5 Pro💡` (`gemini-2.5-pro-preview-05-06`) - Доступ к этой модели может быть разблокирован с помощью специального кода (см. команду `/unlock_pro`).
     -   `2.0 Flash❓` (`gemini-2.0-flash`)
 -   **Генерация изображений:** Создавайте изображения по текстовому запросу с помощью команды `/generate <запрос>` (используется модель `gemini-2.0-flash-exp-image-generation`).
@@ -151,7 +151,7 @@ This project implements a Telegram bot that uses the Google Gemini API to intera
 
 -   **Intelligent Chat:** The bot maintains conversation context for natural communication.
 -   **Support for Multiple Gemini Models:** Choose the optimal model for your tasks:
-    -   `2.5 Flash 🚀` (`gemini-2.5-flash-preview-04-17`)
+    -   `2.5 Flash 🚀` (`gemini-2.5-flash-preview-05-20`)
     -   `2.5 Pro💡` (`gemini-2.5-pro-preview-05-06`) - Access to this model can be unlocked with a special code (see the `/unlock_pro` command).
     -   `2.0 Flash❓` (`gemini-2.0-flash`)
 -   **Image Generation:** Create images from text prompts using the `/generate <prompt>` command (uses the `gemini-2.0-flash-exp-image-generation` model).

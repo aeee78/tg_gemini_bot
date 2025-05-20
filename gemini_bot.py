@@ -964,7 +964,7 @@ def handle_quick_tool_command(message):
 
     try:
         config_kwargs = {"system_instruction": system_instruction}
-        if model_to_use == "gemini-2.5-flash-preview-04-17" and thinking_budget is not None:
+        if model_to_use == "gemini-2.5-flash-preview-05-20" and thinking_budget is not None:
             config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
                 thinking_budget=thinking_budget
             )

@@ -9,7 +9,7 @@ QUICK_TOOLS_CONFIG = {
             "Provide *only* the translated text, without any introduction, comments, or explanations."
         ),
         "description": "ru<>en Перевод текста",
-        "model": "gemini-2.5-flash-preview-04-17",
+        "model": "gemini-2.5-flash-preview-05-20",
         "thinking_budget": 0,
     },
     "prompt": {
