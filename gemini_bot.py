@@ -37,7 +37,6 @@ from utils import markdown_to_text, split_long_message
 load_dotenv()
 
 client = genai.Client(api_key=GEMINI_API_KEY)
-print(GEMINI_API_KEY)
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 bot.set_my_commands(COMMAND_LIST)
@@ -592,7 +591,7 @@ def handle_model_selection(call):
     user_id = call.from_user.id
     selected_model = call.data.replace("model_", "")
 
-    PRO_MODEL_NAME = "gemini-2.5-pro-preview-05-06"
+    PRO_MODEL_NAME = "gemini-2.5-pro-preview-06-05"
 
     if selected_model == PRO_MODEL_NAME and not is_whitelisted(user_id):
         bot.answer_callback_query(call.id, text="Доступ к про модели ограничен. Используйте /unlock_pro <Имя создателя бота>")
