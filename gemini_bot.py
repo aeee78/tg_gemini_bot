@@ -819,8 +819,9 @@ def handle_photo(message):
         img = Image.open(image_stream)
 
         api_message_parts = []
-        effective_caption = caption if caption else "Опиши это изображение."
-        api_message_parts.append(effective_caption)
+
+        if caption:
+            api_message_parts.append(caption)
         api_message_parts.append(img)
 
         chat_session = user_chats[user_id]
