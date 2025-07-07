@@ -108,8 +108,11 @@ jobs:
             echo "--- Activating virtual environment ---"
             source .venv/bin/activate
 
-            echo "--- Installing Python dependencies ---"
-            uv pip install -r requirements.txt
+            echo "--- Compiling requirements.in to get latest package versions ---"
+            uv pip compile requirements.in -o requirements.txt
+
+            echo "--- Syncing Python dependencies from newly generated requirements.txt ---"
+            uv pip sync requirements.txt
 
             echo "--- Managing systemd service ---"
             echo "IMPORTANT: Assuming $SERVICE_NAME is already present in /etc/systemd/system/"
