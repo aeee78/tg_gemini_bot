@@ -53,6 +53,7 @@ user_search_enabled = {}
 WHITELIST_FILE = "whitelist.txt"
 whitelisted_users = set()
 
+
 def load_whitelist():
     """Загружает белый список пользователей из файла"""
     try:
@@ -63,9 +64,12 @@ def load_whitelist():
                     whitelisted_users.add(int(user_id))
         print(f"Loaded {len(whitelisted_users)} users into whitelist.")
     except FileNotFoundError:
-        print(f"Whitelist file '{WHITELIST_FILE}' not found. Starting with empty whitelist.")
+        print(
+            f"Whitelist file '{WHITELIST_FILE}' not found. Starting with empty whitelist."
+        )
     except Exception as e:
         print(f"Error loading whitelist: {e}")
+
 
 def add_to_whitelist(user_id):
     """Добавляет пользователя в белый список."""
@@ -78,10 +82,12 @@ def add_to_whitelist(user_id):
         except Exception as e:
             print(f"Error adding user {user_id} to whitelist: {e}")
 
+
 def is_whitelisted(user_id):
     """Checks if a user ID is in the whitelist."""
-    
+
     return user_id in whitelisted_users
+
 
 def ensure_user_started(func):
     """Декоратор: проверяет, начал ли пользователь диалог командой /start."""
@@ -123,9 +129,7 @@ def ensure_user_started(func):
 def download_telegram_image(file_id):
     """Загружает изображение из Telegram."""
     file_info = bot.get_file(file_id)
-    file_url = (
-        f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info.file_path}"
-    )
+    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info.file_path}"
     response = requests.get(file_url)
     return io.BytesIO(response.content)
 
@@ -157,9 +161,7 @@ def handle_help_command(message):
                 example = " (напр. `/translate привет мир`)"
             elif command_info.command == "/prompt":
                 example = " (напр. `/prompt напиши стих`)"
-            help_text += (
-                f"- *{command_info.command}*: {command_info.description}{example}\n"
-            )
+            help_text += f"- *{command_info.command}*: {command_info.description}{example}\n"
     help_text += "- *Пример:* `/translate Hello world`\n"
 
     bot.send_message(message.chat.id, help_text, parse_mode="Markdown")
@@ -178,6 +180,7 @@ def handle_unlock_pro(message):
         bot.reply_to(message, "✅ Доступ к про модели разблокирован!")
     else:
         bot.reply_to(message, "❌ Неверный код. Используйте другой")
+
 
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
@@ -242,7 +245,9 @@ def new_chat(message):
     )
 
 
-@bot.message_handler(func=lambda message: message.text.startswith("Получить ."))
+@bot.message_handler(
+    func=lambda message: message.text.startswith("Получить .")
+)
 @ensure_user_started
 def get_response_as_md(message):
     """Обрабатывает нажатие кнопки "Получить .md 📄"."""
@@ -250,8 +255,12 @@ def get_response_as_md(message):
 
     if user_last_responses.get(user_id):
         words = user_last_responses[user_id].split()
-        filename = "_".join(words[:3]) + ".md" if len(words) > 0 else "response.md"
-        filename = filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+        filename = (
+            "_".join(words[:3]) + ".md" if len(words) > 0 else "response.md"
+        )
+        filename = (
+            filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+        )
 
         send_text_as_file(
             message.chat.id,
@@ -280,7 +289,9 @@ def handle_send_mode(message):
     current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
 
     new_mode = (
-        SEND_MODE_MANUAL if current_mode == SEND_MODE_IMMEDIATE else SEND_MODE_IMMEDIATE
+        SEND_MODE_MANUAL
+        if current_mode == SEND_MODE_IMMEDIATE
+        else SEND_MODE_IMMEDIATE
     )
 
     user_send_modes[user_id] = new_mode
@@ -454,7 +465,7 @@ def handle_send_all(message):
         tools = [Tool(url_context=genai_types.UrlContext())]
         if user_search_enabled.get(user_id, False):
             tools.append(Tool(google_search=GoogleSearch()))
-        
+
         gemini_config = GenerateContentConfig(tools=tools)
 
         response = user_chats[user_id].send_message(
@@ -473,10 +484,18 @@ def handle_send_all(message):
                 for i, chunk in enumerate(
                     response.candidates[0].grounding_metadata.grounding_chunks
                 ):
-                    if hasattr(chunk, "web") and chunk.web.uri and chunk.web.title:
-                        sources.append(f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})")
+                    if (
+                        hasattr(chunk, "web")
+                        and chunk.web.uri
+                        and chunk.web.title
+                    ):
+                        sources.append(
+                            f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})"
+                        )
                     elif hasattr(chunk, "web") and chunk.web.uri:
-                        sources.append(f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})")
+                        sources.append(
+                            f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})"
+                        )
 
                 if sources:
                     sources_text = "\n\nИсточники:\n" + "\n".join(sources)
@@ -497,7 +516,9 @@ def handle_send_all(message):
 
         for i, part in enumerate(message_parts):
             if i == 0:
-                bot.send_message(chat_id, part, reply_to_message_id=message.message_id)
+                bot.send_message(
+                    chat_id, part, reply_to_message_id=message.message_id
+                )
             else:
                 bot.send_message(chat_id, part)
 
@@ -563,7 +584,9 @@ def handle_get_file(call):
             if len(words) > 0
             else f"response.{file_format}"
         )
-        filename = filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+        filename = (
+            filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+        )
 
         if file_format == "txt":
             file_content = markdown_to_text(raw_response)
@@ -595,7 +618,10 @@ def handle_model_selection(call):
     PRO_MODEL_NAME = "gemini-2.5-pro"
 
     if selected_model == PRO_MODEL_NAME and not is_whitelisted(user_id):
-        bot.answer_callback_query(call.id, text="Доступ к про модели ограничен. Используйте /unlock_pro <Имя создателя бота>")
+        bot.answer_callback_query(
+            call.id,
+            text="Доступ к про модели ограничен. Используйте /unlock_pro <Имя создателя бота>",
+        )
         bot.send_message(
             call.message.chat.id,
             "Доступ к про модели ограничен. Пожалуйста, используйте команду /unlock_pro <Имя создателя бота> для разблокировки.",
@@ -685,7 +711,9 @@ def handle_document(message):
             if current_mode == SEND_MODE_MANUAL:
                 if user_id not in user_message_buffer:
                     user_message_buffer[user_id] = []
-                user_message_buffer[user_id].append({**file_data, "type": "document"})
+                user_message_buffer[user_id].append(
+                    {**file_data, "type": "document"}
+                )
                 buffer_count = len(user_message_buffer[user_id])
                 file_type_short = doc_mime_type.split("/")[-1].upper()
                 bot.reply_to(
@@ -799,7 +827,9 @@ def handle_photo(message):
     if user_id not in user_chats:
         try:
 
-            user_chats[user_id] = client.chats.create(model=user_models[user_id])
+            user_chats[user_id] = client.chats.create(
+                model=user_models[user_id]
+            )
             user_last_responses[user_id] = None
         except Exception as e:
             bot.reply_to(
@@ -943,7 +973,9 @@ def handle_quick_tool_command(message):
     chat_id = message.chat.id
     command_with_slash = message.text.split(" ", 1)[0]
     command = command_with_slash[1:]
-    user_query = message.text.split(" ", 1)[1].strip() if " " in message.text else ""
+    user_query = (
+        message.text.split(" ", 1)[1].strip() if " " in message.text else ""
+    )
 
     if not user_query:
         bot.reply_to(
@@ -960,7 +992,9 @@ def handle_quick_tool_command(message):
     thinking_budget = tool_config.get("thinking_budget", None)
 
     bot.send_chat_action(chat_id, "typing")
-    status_msg = bot.reply_to(message, f"Выполняю команду `{command_with_slash}`...")
+    status_msg = bot.reply_to(
+        message, f"Выполняю команду `{command_with_slash}`..."
+    )
 
     try:
         config_kwargs = {"system_instruction": system_instruction}
@@ -981,7 +1015,9 @@ def handle_quick_tool_command(message):
             words = user_query.split()
             filename_base = "_".join(words[:3]) if len(words) > 0 else command
             filename = f"{filename_base}_{command}.md"
-            filename = filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+            filename = (
+                filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+            )
             send_text_as_file(chat_id, raw_response_text, filename)
 
         try:
@@ -1022,7 +1058,9 @@ def handle_message(message):
     if current_mode == SEND_MODE_MANUAL:
         if user_id not in user_message_buffer:
             user_message_buffer[user_id] = []
-        user_message_buffer[user_id].append({"type": "text", "content": message.text})
+        user_message_buffer[user_id].append(
+            {"type": "text", "content": message.text}
+        )
         buffer_count = len(user_message_buffer[user_id])
         bot.reply_to(
             message,
@@ -1050,11 +1088,14 @@ def handle_message(message):
                 try:
                     api_message_parts.append(
                         genai_types.Part.from_bytes(
-                            mime_type=file_info["mime_type"], data=file_info["data"]
+                            mime_type=file_info["mime_type"],
+                            data=file_info["data"],
                         )
                     )
 
-                    api_message_parts.append(f"(Файл: {file_info['filename']})")
+                    api_message_parts.append(
+                        f"(Файл: {file_info['filename']})"
+                    )
                 except Exception as file_err:
                     bot.send_message(
                         chat_id,
@@ -1066,10 +1107,13 @@ def handle_message(message):
         if user_id not in user_chats:
 
             try:
-                user_chats[user_id] = client.chats.create(model=user_models[user_id])
+                user_chats[user_id] = client.chats.create(
+                    model=user_models[user_id]
+                )
             except Exception as e:
                 bot.reply_to(
-                    message, f"Ошибка инициализации чата перед отправкой: {e!s}"
+                    message,
+                    f"Ошибка инициализации чата перед отправкой: {e!s}",
                 )
                 return
 
@@ -1096,10 +1140,18 @@ def handle_message(message):
                 for i, chunk in enumerate(
                     response.candidates[0].grounding_metadata.grounding_chunks
                 ):
-                    if hasattr(chunk, "web") and chunk.web.uri and chunk.web.title:
-                        sources.append(f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})")
+                    if (
+                        hasattr(chunk, "web")
+                        and chunk.web.uri
+                        and chunk.web.title
+                    ):
+                        sources.append(
+                            f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})"
+                        )
                     elif hasattr(chunk, "web") and chunk.web.uri:
-                        sources.append(f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})")
+                        sources.append(
+                            f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})"
+                        )
 
                 if sources:
                     sources_text = "\n\nИсточники:\n" + "\n".join(sources)
