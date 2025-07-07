@@ -451,10 +451,11 @@ def handle_send_all(message):
     )
 
     try:
-        gemini_config = None
+        tools = [Tool(url_context=genai_types.UrlContext())]
         if user_search_enabled.get(user_id, False):
-            google_search_tool = Tool(google_search=GoogleSearch())
-            gemini_config = GenerateContentConfig(tools=[google_search_tool])
+            tools.append(Tool(google_search=GoogleSearch()))
+        
+        gemini_config = GenerateContentConfig(tools=tools)
 
         response = user_chats[user_id].send_message(
             message=combined_parts, config=gemini_config
@@ -473,9 +474,9 @@ def handle_send_all(message):
                     response.candidates[0].grounding_metadata.grounding_chunks
                 ):
                     if hasattr(chunk, "web") and chunk.web.uri and chunk.web.title:
-                        sources.append(f"{i+1}. [{chunk.web.title}]({chunk.web.uri})")
+                        sources.append(f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})")
                     elif hasattr(chunk, "web") and chunk.web.uri:
-                        sources.append(f"{i+1}. [{chunk.web.uri}]({chunk.web.uri})")
+                        sources.append(f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})")
 
                 if sources:
                     sources_text = "\n\nИсточники:\n" + "\n".join(sources)
@@ -939,7 +940,6 @@ def handle_generate_command(message):
 @ensure_user_started
 def handle_quick_tool_command(message):
     """Обрабатывает команды быстрых инструментов (напр., /translate, /prompt)."""
-    user_id = message.from_user.id
     chat_id = message.chat.id
     command_with_slash = message.text.split(" ", 1)[0]
     command = command_with_slash[1:]
@@ -1073,10 +1073,11 @@ def handle_message(message):
                 )
                 return
 
-        gemini_config = None
+        tools = [Tool(url_context=genai_types.UrlContext())]
         if user_search_enabled.get(user_id, False):
-            google_search_tool = Tool(google_search=GoogleSearch())
-            gemini_config = GenerateContentConfig(tools=[google_search_tool])
+            tools.append(Tool(google_search=GoogleSearch()))
+
+        gemini_config = GenerateContentConfig(tools=tools)
 
         response = user_chats[user_id].send_message(
             message=api_message_parts, config=gemini_config
@@ -1096,9 +1097,9 @@ def handle_message(message):
                     response.candidates[0].grounding_metadata.grounding_chunks
                 ):
                     if hasattr(chunk, "web") and chunk.web.uri and chunk.web.title:
-                        sources.append(f"{i+1}. [{chunk.web.title}]({chunk.web.uri})")
+                        sources.append(f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})")
                     elif hasattr(chunk, "web") and chunk.web.uri:
-                        sources.append(f"{i+1}. [{chunk.web.uri}]({chunk.web.uri})")
+                        sources.append(f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})")
 
                 if sources:
                     sources_text = "\n\nИсточники:\n" + "\n".join(sources)
