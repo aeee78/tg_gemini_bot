@@ -22,8 +22,9 @@ from constants import (
     TELEGRAM_TOKEN,
     HELP_TEXT_TEMPLATE,
     get_model_alias,
+    is_image_generation_model,
 )
-from image_generation import generate_image_direct
+
 from keyboards import (
     get_file_download_keyboard,
     get_main_keyboard,
@@ -145,6 +146,68 @@ def send_text_as_file(chat_id, text, filename="response.txt"):
     )
 
 
+def send_gemini_response_with_images(
+    chat_id, response, reply_to_message_id=None
+):
+    """Отправляет ответ Gemini, обрабатывая как текст, так и изображения."""
+    text_parts = []
+
+    if hasattr(response, "candidates") and response.candidates:
+        for candidate in response.candidates:
+            if hasattr(candidate, "content") and candidate.content:
+                if (
+                    hasattr(candidate.content, "parts")
+                    and candidate.content.parts
+                ):
+                    for part in candidate.content.parts:
+                        if hasattr(part, "text") and part.text:
+                            text_parts.append(part.text)
+                        elif hasattr(part, "inline_data"):
+                            try:
+                                image_data = part.inline_data.data
+                                mime_type = part.inline_data.mime_type
+
+                                image_bytes = io.BytesIO(image_data)
+
+                                if mime_type.startswith("image/"):
+                                    bot.send_photo(
+                                        chat_id,
+                                        image_bytes,
+                                        reply_to_message_id=reply_to_message_id,
+                                    )
+                                else:
+                                    bot.send_document(
+                                        chat_id,
+                                        image_bytes,
+                                        visible_file_name=f"generated_content.{mime_type.split('/')[-1]}",
+                                        reply_to_message_id=reply_to_message_id,
+                                    )
+                            except Exception as e:
+                                print(f"Ошибка отправки изображения: {e}")
+                                text_parts.append(
+                                    f"[Ошибка отправки изображения: {e}]"
+                                )
+
+    if not text_parts and hasattr(response, "text") and response.text:
+        text_parts.append(response.text)
+
+    if text_parts:
+        combined_text = "\n".join(text_parts)
+        plain_text = markdown_to_text(combined_text)
+        message_parts = split_long_message(plain_text)
+
+        for i, part in enumerate(message_parts):
+            bot.send_message(
+                chat_id,
+                part,
+                reply_to_message_id=reply_to_message_id if i == 0 else None,
+            )
+
+        return combined_text
+
+    return ""
+
+
 @bot.message_handler(commands=["help"])
 def handle_help_command(message):
     """Выводит подробную справку по функциям бота."""
@@ -155,7 +218,7 @@ def handle_help_command(message):
     )
 
     for command_info in COMMAND_LIST:
-        if command_info.command not in ["/start", "/generate"]:
+        if command_info.command not in ["/start"]:
             example = ""
             if command_info.command == "/translate":
                 example = " (напр. `/translate привет мир`)"
@@ -172,7 +235,6 @@ def handle_help_command(message):
 def handle_unlock_pro(message):
     """Обрабатывает команду /unlock_pro."""
     user_id = message.from_user.id
-    chat_id = message.chat.id
     command_parts = message.text.split(" ", 1)
 
     if len(command_parts) == 2 and command_parts[1].strip() == str(PRO_CODE):
@@ -462,16 +524,28 @@ def handle_send_all(message):
     )
 
     try:
-        tools = [Tool(url_context=genai_types.UrlContext())]
-        if user_search_enabled.get(user_id, False):
-            tools.append(Tool(google_search=GoogleSearch()))
-
-        gemini_config = GenerateContentConfig(tools=tools)
+        current_model = user_models.get(user_id, DEFAULT_MODEL)
+        if is_image_generation_model(current_model):
+            gemini_config = GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"]
+            )
+        else:
+            tools = [Tool(url_context=genai_types.UrlContext())]
+            if user_search_enabled.get(user_id, False):
+                tools.append(Tool(google_search=GoogleSearch()))
+            gemini_config = GenerateContentConfig(tools=tools)
 
         response = user_chats[user_id].send_message(
             message=combined_parts, config=gemini_config
         )
-        raw_response_text = response.text
+
+        current_model = user_models.get(user_id, DEFAULT_MODEL)
+        if is_image_generation_model(current_model):
+            raw_response_text = send_gemini_response_with_images(
+                chat_id, response, reply_to_message_id=message.message_id
+            )
+        else:
+            raw_response_text = response.text
 
         sources_text = ""
         try:
@@ -511,23 +585,24 @@ def handle_send_all(message):
         except Exception:
             pass
 
-        plain_response_text = markdown_to_text(raw_response_text)
-        message_parts = split_long_message(plain_response_text)
+        if not is_image_generation_model(current_model):
+            plain_response_text = markdown_to_text(raw_response_text)
+            message_parts = split_long_message(plain_response_text)
 
-        for i, part in enumerate(message_parts):
-            if i == 0:
+            for i, part in enumerate(message_parts):
+                if i == 0:
+                    bot.send_message(
+                        chat_id, part, reply_to_message_id=message.message_id
+                    )
+                else:
+                    bot.send_message(chat_id, part)
+
+            if len(message_parts) > 1:
                 bot.send_message(
-                    chat_id, part, reply_to_message_id=message.message_id
+                    chat_id,
+                    "Ответ был разбит на несколько сообщений.",
+                    reply_markup=get_file_download_keyboard(user_id),
                 )
-            else:
-                bot.send_message(chat_id, part)
-
-        if len(message_parts) > 1:
-            bot.send_message(
-                chat_id,
-                "Ответ был разбит на несколько сообщений.",
-                reply_markup=get_file_download_keyboard(user_id),
-            )
 
     except Exception as e:
         try:
@@ -779,7 +854,6 @@ def handle_document(message):
 @bot.message_handler(content_types=["photo"])
 @ensure_user_started
 def handle_photo(message):
-    """Обрабатывает сообщения с фотографиями в зависимости от режима."""
     user_id = message.from_user.id
     chat_id = message.chat.id
 
@@ -856,103 +930,49 @@ def handle_photo(message):
         api_message_parts.append(img)
 
         chat_session = user_chats[user_id]
-        response = chat_session.send_message(message=api_message_parts)
 
-        raw_response_text = response.text
+        current_model = user_models.get(user_id, DEFAULT_MODEL)
+        if is_image_generation_model(current_model):
+            gemini_config = GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"]
+            )
+            response = chat_session.send_message(
+                message=api_message_parts, config=gemini_config
+            )
+        else:
+            response = chat_session.send_message(message=api_message_parts)
+
+        if is_image_generation_model(current_model):
+            raw_response_text = send_gemini_response_with_images(
+                chat_id, response, reply_to_message_id=message.message_id
+            )
+        else:
+            raw_response_text = response.text
+
         user_last_responses[user_id] = raw_response_text
 
-        plain_response_text = markdown_to_text(raw_response_text)
-        message_parts = split_long_message(plain_response_text)
+        if not is_image_generation_model(current_model):
+            plain_response_text = markdown_to_text(raw_response_text)
+            message_parts = split_long_message(plain_response_text)
 
-        for i, part in enumerate(message_parts):
-            if i == 0:
-                bot.reply_to(message, part)
-            else:
-                bot.send_message(chat_id, part)
+            for i, part in enumerate(message_parts):
+                if i == 0:
+                    bot.reply_to(message, part)
+                else:
+                    bot.send_message(chat_id, part)
 
-        if len(message_parts) > 1:
-            bot.send_message(
-                chat_id,
-                "Ответ был разбит на несколько сообщений.",
-                reply_markup=get_file_download_keyboard(user_id),
-            )
+            if len(message_parts) > 1:
+                bot.send_message(
+                    chat_id,
+                    "Ответ был разбит на несколько сообщений.",
+                    reply_markup=get_file_download_keyboard(user_id),
+                )
 
     except Exception as e:
         bot.reply_to(
             message,
             f"Произошла ошибка при обработке изображения ({user_models.get(user_id, 'неизвестно')}): {e!s}\n\n"
             "Возможно, стоит попробовать новый чат.",
-            reply_markup=get_main_keyboard(
-                user_id,
-                user_send_modes,
-                user_search_enabled.get(user_id, False),
-                user_models.get(user_id, DEFAULT_MODEL),
-            ),
-        )
-
-
-@bot.message_handler(commands=["generate"])
-@ensure_user_started
-def handle_generate_command(message):
-    """Обрабатывает команду /generate для создания изображений."""
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    try:
-
-        prompt = message.text.split("/generate", 1)[1].strip()
-
-        if not prompt:
-            bot.reply_to(
-                message,
-                "Пожалуйста, укажите запрос после команды /generate.\n"
-                "Например: `/generate красивый рыжий кот`",
-            )
-            return
-
-        bot.send_chat_action(chat_id, "upload_photo")
-        status_msg = bot.reply_to(
-            message, f'Генерирую изображение по запросу: "{prompt}"...'
-        )
-
-        image_stream = generate_image_direct(prompt)
-
-        try:
-            bot.delete_message(chat_id, status_msg.message_id)
-        except Exception:
-            pass
-
-        if image_stream:
-            bot.send_photo(
-                chat_id,
-                image_stream,
-                caption=f"Изображение по запросу: {prompt}",
-                reply_to_message_id=message.message_id,
-            )
-        else:
-            bot.reply_to(
-                message,
-                "Не удалось сгенерировать изображение. Попробуйте "
-                "изменить запрос или проверьте настройки API.",
-                reply_markup=get_main_keyboard(
-                    user_id,
-                    user_send_modes,
-                    user_search_enabled.get(user_id, False),
-                    user_models.get(user_id, DEFAULT_MODEL),
-                ),
-            )
-
-    except IndexError:
-
-        bot.reply_to(
-            message,
-            "Пожалуйста, укажите запрос после команды /generate.\n"
-            "Например: `/generate красивый рыжий кот`",
-        )
-    except Exception as e:
-        print(f"Error during image generation command: {e}")
-        bot.reply_to(
-            message,
-            f"Произошла ошибка при генерации изображения: {e!s}",
             reply_markup=get_main_keyboard(
                 user_id,
                 user_send_modes,
@@ -1003,13 +1023,21 @@ def handle_quick_tool_command(message):
                 thinking_budget=thinking_budget
             )
 
+        if is_image_generation_model(model_to_use):
+            config_kwargs["response_modalities"] = ["TEXT", "IMAGE"]
+
         response = client.models.generate_content(
             model=model_to_use,
             contents=user_query,
             config=genai_types.GenerateContentConfig(**config_kwargs),
         )
 
-        raw_response_text = response.text
+        if is_image_generation_model(model_to_use):
+            raw_response_text = send_gemini_response_with_images(
+                chat_id, response, reply_to_message_id=message.message_id
+            )
+        else:
+            raw_response_text = response.text
 
         if command in ["todo", "markdown", "dayplanner"]:
             words = user_query.split()
@@ -1025,14 +1053,15 @@ def handle_quick_tool_command(message):
         except Exception:
             pass
 
-        plain_response_text = markdown_to_text(raw_response_text)
-        message_parts = split_long_message(plain_response_text)
+        if not is_image_generation_model(model_to_use):
+            plain_response_text = markdown_to_text(raw_response_text)
+            message_parts = split_long_message(plain_response_text)
 
-        for i, part in enumerate(message_parts):
-            if i == 0:
-                bot.reply_to(message, part)
-            else:
-                bot.send_message(chat_id, part)
+            for i, part in enumerate(message_parts):
+                if i == 0:
+                    bot.reply_to(message, part)
+                else:
+                    bot.send_message(chat_id, part)
 
     except Exception as e:
         try:
@@ -1049,7 +1078,6 @@ def handle_quick_tool_command(message):
 @bot.message_handler(func=lambda message: True)
 @ensure_user_started
 def handle_message(message):
-    """Обрабатывает обычные текстовые сообщения (не команды инструментов)."""
     user_id = message.from_user.id
     chat_id = message.chat.id
 
@@ -1117,17 +1145,30 @@ def handle_message(message):
                 )
                 return
 
-        tools = [Tool(url_context=genai_types.UrlContext())]
-        if user_search_enabled.get(user_id, False):
-            tools.append(Tool(google_search=GoogleSearch()))
-
-        gemini_config = GenerateContentConfig(tools=tools)
+        current_model = user_models.get(user_id, DEFAULT_MODEL)
+        if is_image_generation_model(current_model):
+            gemini_config = GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"]
+            )
+        else:
+            tools = [Tool(url_context=genai_types.UrlContext())]
+            if user_search_enabled.get(user_id, False):
+                tools.append(Tool(google_search=GoogleSearch()))
+            gemini_config = GenerateContentConfig(tools=tools)
 
         response = user_chats[user_id].send_message(
             message=api_message_parts, config=gemini_config
         )
 
-        raw_response_text = response.text
+        current_model = user_models.get(user_id, DEFAULT_MODEL)
+        if is_image_generation_model(current_model):
+            raw_response_text = send_gemini_response_with_images(
+                message.chat.id,
+                response,
+                reply_to_message_id=message.message_id,
+            )
+        else:
+            raw_response_text = response.text
 
         sources_text = ""
         try:
@@ -1161,24 +1202,24 @@ def handle_message(message):
 
         user_last_responses[user_id] = raw_response_text
 
-        plain_response_text = markdown_to_text(response.text) + sources_text
-        message_parts = split_long_message(plain_response_text)
-
-        for i, part in enumerate(message_parts):
-            if i == 0:
-
-                bot.reply_to(message, part)
-
-            else:
-
-                bot.send_message(message.chat.id, part)
-
-        if len(message_parts) > 1:
-            bot.send_message(
-                message.chat.id,
-                "Ответ был разбит на несколько сообщений.",
-                reply_markup=get_file_download_keyboard(user_id),
+        if not is_image_generation_model(current_model):
+            plain_response_text = (
+                markdown_to_text(response.text) + sources_text
             )
+            message_parts = split_long_message(plain_response_text)
+
+            for i, part in enumerate(message_parts):
+                if i == 0:
+                    bot.reply_to(message, part)
+                else:
+                    bot.send_message(message.chat.id, part)
+
+            if len(message_parts) > 1:
+                bot.send_message(
+                    message.chat.id,
+                    "Ответ был разбит на несколько сообщений.",
+                    reply_markup=get_file_download_keyboard(user_id),
+                )
     except Exception as e:
         bot.reply_to(
             message,
