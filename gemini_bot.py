@@ -621,23 +621,6 @@ def handle_send_all(message):
             ),
         )
 
-    except Exception as e:
-        try:
-            bot.delete_message(chat_id, status_msg.message_id)
-        except Exception:
-            pass
-        bot.reply_to(
-            message,
-            f"Произошла ошибка при отправке: {e!s}\n\n"
-            "Ваши сообщения и фото сохранены в буфере. Попробуйте позже или измените содержимое буфера.",
-            reply_markup=get_main_keyboard(
-                user_id,
-                user_send_modes,
-                user_search_enabled.get(user_id, False),
-                user_models.get(user_id, DEFAULT_MODEL),
-            ),
-        )
-
 
 @bot.callback_query_handler(
     func=lambda call: call.data.startswith("get_file_")
@@ -1015,6 +998,13 @@ def handle_quick_tool_command(message):
     status_msg = bot.reply_to(
         message, f"Выполняю команду `{command_with_slash}`..."
     )
+
+    if len(user_query) > 4000:
+        bot.reply_to(
+            message,
+            f"Текст слишком длинный для команды {command_with_slash}. Максимум 4000 символов.",
+        )
+        return
 
     try:
         config_kwargs = {"system_instruction": system_instruction}
