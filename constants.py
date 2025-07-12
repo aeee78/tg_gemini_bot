@@ -21,7 +21,6 @@ AVAILABLE_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.5-pro",
     "gemini-2.5-flash-lite-preview-06-17",
-    "gemini-2.0-flash",
     "gemini-2.0-flash-preview-image-generation",
 ]
 
@@ -30,7 +29,6 @@ MODEL_ALIASES = {
     "gemini-2.5-flash": "2.5 Flash 🚀",
     "gemini-2.5-pro": "2.5 Pro💡",
     "gemini-2.5-flash-lite-preview-06-17": "2.5 Flash Lite🐣",
-    "gemini-2.0-flash": "2.0 Flash❓",
     "gemini-2.0-flash-preview-image-generation": "2.0 Flash+IMG🎨",
 }
 

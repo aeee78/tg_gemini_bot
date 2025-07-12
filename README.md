@@ -26,7 +26,6 @@
 -   **`2.5 Flash 🚀`** (`gemini-2.5-flash`) - Быстрая модель для повседневных задач
 -   **`2.5 Pro💡`** (`gemini-2.5-pro`) - Продвинутая модель для сложных задач (доступ через `/unlock_pro`)
 -   **`2.5 Flash Lite🐣`** (`gemini-2.5-flash-lite-preview-06-17`) - Облегченная версия
--   **`2.0 Flash❓`** (`gemini-2.0-flash`)
 -   **`2.0 Flash+IMG🎨`** (`gemini-2.0-flash-preview-image-generation`) - **Модель с генерацией изображений**
 
 ### 📁 **Работа с файлами**
@@ -208,7 +207,6 @@ This project implements a Telegram bot that uses the Google Gemini API to intera
 -   **`2.5 Flash 🚀`** (`gemini-2.5-flash`) - Fast model for everyday tasks
 -   **`2.5 Pro💡`** (`gemini-2.5-pro`) - Advanced model for complex tasks (access via `/unlock_pro`)
 -   **`2.5 Flash Lite🐣`** (`gemini-2.5-flash-lite-preview-06-17`) - Lightweight version
--   **`2.0 Flash❓`** (`gemini-2.0-flash`)
 -   **`2.0 Flash+IMG🎨`** (`gemini-2.0-flash-preview-image-generation`) - **Image generation model**
 
 ### 📁 **File Processing**
