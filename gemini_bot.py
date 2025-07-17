@@ -314,26 +314,36 @@ def new_chat(message):
 def get_response_as_md(message):
     """Обрабатывает нажатие кнопки "Получить .md 📄"."""
     user_id = message.from_user.id
+    chat_id = message.chat.id
 
     if user_last_responses.get(user_id):
-        words = user_last_responses[user_id].split()
-        filename = (
-            "_".join(words[:3]) + ".md" if len(words) > 0 else "response.md"
-        )
-        filename = (
-            filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+        raw_response = user_last_responses[user_id]
+
+        words = raw_response.split()
+        filename_base = "_".join(words[:3]) if len(words) > 0 else "response"
+        filename_base = (
+            filename_base.replace("/", "_").replace("\\", "_").replace(":", "_")
         )
 
+        md_filename = f"{filename_base}.md"
         send_text_as_file(
-            message.chat.id,
-            user_last_responses[user_id],
-            filename,
+            chat_id,
+            raw_response,
+            md_filename,
+        )
+
+        txt_filename = f"{filename_base}.txt"
+        plain_text = markdown_to_text(raw_response)
+        send_text_as_file(
+            chat_id,
+            plain_text,
+            txt_filename,
         )
     else:
         search_enabled = user_search_enabled.get(user_id, False)
         current_model = user_models.get(user_id, DEFAULT_MODEL)
         bot.send_message(
-            message.chat.id,
+            chat_id,
             "У меня нет сохраненных ответов для отправки в виде файла.",
             reply_markup=get_main_keyboard(
                 user_id, user_send_modes, search_enabled, current_model
