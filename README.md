@@ -25,8 +25,8 @@
 ### 🧠 **Поддержка моделей Gemini**
 -   **`2.5 Flash 🚀`** (`gemini-2.5-flash`) - Быстрая модель для повседневных задач
 -   **`2.5 Pro💡`** (`gemini-2.5-pro`) - Продвинутая модель для сложных задач (доступ через `/unlock_pro`)
--   **`2.5 Flash Lite🐣`** (`gemini-2.5-flash-lite-preview-06-17`) - Облегченная версия
--   **`2.0 Flash+IMG🎨`** (`gemini-2.0-flash-preview-image-generation`) - **Модель с генерацией изображений**
+-   **`2.5 Flash Lite🐣`** (`gemini-2.5-flash-lite`) - Облегченная версия
+-   **`2.5 Flash+IMG🎨`** (`gemini-2.5-flash-image-preview`) - **Модель с генерацией изображений** (доступ через `/unlock_pro`)
 
 ### 📁 **Работа с файлами**
 -   **Поддержка форматов:** PDF, DOCX, TXT, CSV, JSON, XML, HTML, CSS, JS, PY и другие
@@ -70,7 +70,7 @@
     ```plaintext
     TELEGRAM_TOKEN=<ваш_токен_telegram>
     GEMINI_API_KEY=<ваш_api_ключ_gemini>
-    PRO_CODE=<ваш_код_для_pro_доступа_опционально> # Установите этот код, чтобы включить команду /unlock_pro для доступа к модели 2.5 Pro
+    PRO_CODE=<ваш_код_для_pro_доступа_опционально> # Установите этот код, чтобы включить команду /unlock_pro для доступа к некоторым моделям
     ```
 6.  **Запустите бота:**
     ```bash
@@ -110,7 +110,7 @@
 ### Основные команды
 - `/start` - 🚀 Перезапустить бота / Начать чат
 - `/help` - ℹ️ Справка по возможностям бота
-- `/unlock_pro <код>` - 🔑 Разблокировать доступ к модели `2.5 Pro💡`
+- `/unlock_pro <код>` - 🔑 Разблокировать доступ к некоторым моделям
 
 ### Быстрые инструменты
 
@@ -206,8 +206,8 @@ This project implements a Telegram bot that uses the Google Gemini API to intera
 ### 🧠 **Gemini Models Support**
 -   **`2.5 Flash 🚀`** (`gemini-2.5-flash`) - Fast model for everyday tasks
 -   **`2.5 Pro💡`** (`gemini-2.5-pro`) - Advanced model for complex tasks (access via `/unlock_pro`)
--   **`2.5 Flash Lite🐣`** (`gemini-2.5-flash-lite-preview-06-17`) - Lightweight version
--   **`2.0 Flash+IMG🎨`** (`gemini-2.0-flash-preview-image-generation`) - **Image generation model**
+-   **`2.5 Flash Lite🐣`** (`gemini-2.5-flash-lite`) - Lightweight version
+-   **`2.5 Flash+IMG🎨`** (`gemini-2.5-flash-image-preview`) - **Image generation model** (access via `/unlock_pro`)
 
 ### 📁 **File Processing**
 -   **Supported formats:** PDF, DOCX, TXT, CSV, JSON, XML, HTML, CSS, JS, PY and others
@@ -251,7 +251,7 @@ This project implements a Telegram bot that uses the Google Gemini API to intera
     ```plaintext
     TELEGRAM_TOKEN=<your_telegram_token>
     GEMINI_API_KEY=<your_gemini_api_key>
-    PRO_CODE=<your_pro_access_code_optional> # Set this code to enable the /unlock_pro command for accessing the 2.5 Pro model
+    PRO_CODE=<your_pro_access_code_optional> # Set this code to enable the /unlock_pro command for accessing some models
     ```
 6.  **Run the bot:**
     ```bash
@@ -291,7 +291,7 @@ This project implements a Telegram bot that uses the Google Gemini API to intera
 ### Main Commands
 - `/start` - 🚀 Restart bot / Start chat
 - `/help` - ℹ️ Help with bot features
-- `/unlock_pro <code>` - 🔑 Unlock access to `2.5 Pro💡` model
+- `/unlock_pro <code>` - 🔑 Unlock access to some models
 
 ### Quick Tools
 

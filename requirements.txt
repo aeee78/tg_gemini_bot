@@ -65,7 +65,6 @@ tenacity==8.5.0
     # via google-genai
 typing-extensions==4.14.1
     # via
-    #   anyio
     #   beautifulsoup4
     #   google-genai
     #   pydantic
