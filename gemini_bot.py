@@ -674,6 +674,7 @@ def handle_model_selection(call):
     selected_model = call.data.replace("model_", "")
 
     PRO_MODEL_NAME = "gemini-2.5-pro"
+    IMAGE_MODEL_NAME = "gemini-2.5-flash-image-preview"
 
     if selected_model == PRO_MODEL_NAME and not is_whitelisted(user_id):
         bot.answer_callback_query(
@@ -683,6 +684,23 @@ def handle_model_selection(call):
         bot.send_message(
             call.message.chat.id,
             "Доступ к про модели ограничен. Пожалуйста, используйте команду /unlock_pro <Имя создателя бота> для разблокировки.",
+            reply_markup=get_main_keyboard(
+                user_id,
+                user_send_modes,
+                user_search_enabled.get(user_id, False),
+                user_models.get(user_id, DEFAULT_MODEL),
+            ),
+        )
+        return
+
+    if selected_model == IMAGE_MODEL_NAME and not is_whitelisted(user_id):
+        bot.answer_callback_query(
+            call.id,
+            text="Доступ к модели генерации изображений ограничен. Используйте /unlock_pro <Имя создателя бота>",
+        )
+        bot.send_message(
+            call.message.chat.id,
+            "Доступ к модели генерации изображений ограничен. Пожалуйста, используйте команду /unlock_pro <Имя создателя бота> для разблокировки.",
             reply_markup=get_main_keyboard(
                 user_id,
                 user_send_modes,
