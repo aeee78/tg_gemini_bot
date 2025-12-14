@@ -1,6 +1,6 @@
 
 import unittest
-from utils import markdown_to_text, split_long_message
+from app.utils.text import markdown_to_text, split_long_message
 
 class TestUtils(unittest.TestCase):
     def test_markdown_to_text_basic(self):
