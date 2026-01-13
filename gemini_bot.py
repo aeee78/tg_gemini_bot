@@ -1253,5 +1253,6 @@ def handle_message(message):
 
 
 if __name__ == "__main__":
+    print (GEMINI_API_KEY)
     load_whitelist()
     bot.polling(none_stop=True)
