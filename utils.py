@@ -8,18 +8,42 @@ from constants import MAX_MESSAGE_LENGTH
 
 def markdown_to_text(markdown_string):
     """Converts a markdown string to plaintext"""
-    # md -> html -> text since BeautifulSoup can extract text cleanly
     html = markdown(markdown_string)
-
-    # remove code snippets
-    html = re.sub(r"<pre>(.*?)</pre>", " ", html)
-    html = re.sub(r"<code>(.*?)</code>", " ", html)
-
-    # extract text
     soup = BeautifulSoup(html, "html.parser")
-    text = "".join(soup.findAll(text=True))
 
-    return text
+    # Replace <br> tags with explicit newlines
+    for br in soup.find_all("br"):
+        br.replace_with("\n")
+
+    # Add newlines after block elements to ensure separation
+    block_tags = [
+        "p",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "ul",
+        "ol",
+        "li",
+        "blockquote",
+        "pre",
+        "hr",
+        "div",
+        "table",
+        "tr",
+    ]
+    for tag in soup.find_all(block_tags):
+        tag.append("\n")
+
+    # Add spaces after table cells to ensure separation
+    for tag in soup.find_all(["td", "th"]):
+        tag.append(" ")
+
+    text = soup.get_text(separator="")
+
+    return text.strip()
 
 
 def split_long_message(text, max_length=MAX_MESSAGE_LENGTH):
