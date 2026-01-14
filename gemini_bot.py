@@ -683,7 +683,7 @@ def handle_model_selection(call):
     user_id = call.from_user.id
     selected_model = call.data.replace("model_", "")
 
-    PRO_MODEL_NAME = "gemini-2.5-pro"
+    PRO_MODEL_NAME = "gemini-3-pro-preview"
     IMAGE_MODEL_NAME = "gemini-2.5-flash-image-preview"
 
     if selected_model == PRO_MODEL_NAME and not is_whitelisted(user_id):
@@ -1036,7 +1036,7 @@ def handle_quick_tool_command(message):
 
     try:
         config_kwargs = {"system_instruction": system_instruction}
-        if model_to_use == "gemini-2.5-flash" and thinking_budget is not None:
+        if model_to_use == "gemini-3-flash-preview" and thinking_budget is not None:
             config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
                 thinking_budget=thinking_budget
             )
