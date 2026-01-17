@@ -875,7 +875,7 @@ def handle_model_selection(call):
     selected_model = call.data.replace("model_", "")
 
     PRO_MODEL_NAME = "gemini-3-pro-preview"
-    IMAGE_MODEL_NAME = "gemini-2.5-flash-image-preview"
+    IMAGE_MODEL_NAME = "gemini-2.5-flash-image"
 
     with SessionLocal() as session:
         user = crud.get_or_create_user(session, user_id)
