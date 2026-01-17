@@ -33,6 +33,7 @@ jobs:
             --exclude '.git/' \
             --exclude '.github/' \
             --exclude 'whitelist.txt' \
+            --exclude 'bot.db' \
             -e "ssh -p \"$EFFECTIVE_SSH_PORT\" -o StrictHostKeyChecking=no" . root@$TARGET_SERVER_IP:/home/tg_gemini_bot/
 
       - name: Deploy and Run Application on Server

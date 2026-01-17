@@ -1,4 +1,3 @@
-import re
 import json
 import base64
 
@@ -10,9 +9,10 @@ from constants import MAX_MESSAGE_LENGTH
 
 class BytesEncoder(json.JSONEncoder):
     """Custom JSON Encoder that converts bytes to base64 strings."""
+
     def default(self, obj):
         if isinstance(obj, bytes):
-            return base64.b64encode(obj).decode('utf-8')
+            return base64.b64encode(obj).decode("utf-8")
         return super().default(obj)
 
 
