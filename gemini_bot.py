@@ -1,4 +1,6 @@
 import io
+import json
+import base64
 
 import requests
 import telebot
@@ -32,8 +34,10 @@ from keyboards import (
 )
 from functools import wraps
 
-from utils import markdown_to_text, split_long_message
+from utils import markdown_to_text, split_long_message, BytesEncoder
 
+from database import db, crud
+from database.db import SessionLocal
 
 load_dotenv()
 
@@ -42,17 +46,144 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 bot.set_my_commands(COMMAND_LIST)
 
-
-user_chats = {}
-user_models = {}
+# Global stores
+user_chats = {} # Cache for active chat sessions
 user_last_responses = {}
-user_send_modes = {}
-user_message_buffer = {}
-user_files_context = {}
-user_search_enabled = {}
 
 WHITELIST_FILE = "whitelist.txt"
 whitelisted_users = set()
+
+# --- Helper Functions for Persistence ---
+
+def deserialize_history(history_json):
+    """Deserializes JSON history into list of types.Content."""
+    if not history_json:
+        return []
+    try:
+        data = json.loads(history_json)
+        history = []
+        for item in data:
+            parts = []
+            for part_data in item.get("parts", []):
+                if "inline_data" in part_data and part_data["inline_data"]:
+                    blob_data = part_data["inline_data"]
+                    if "data" in blob_data and isinstance(blob_data["data"], str):
+                        try:
+                            blob_data["data"] = base64.b64decode(blob_data["data"])
+                        except Exception:
+                            pass
+                parts.append(genai_types.Part(**part_data))
+            history.append(genai_types.Content(role=item.get("role"), parts=parts))
+        return history
+    except Exception as e:
+        print(f"Error deserializing history: {e}")
+        return []
+
+def get_active_chat(user_id, model_name):
+    """Gets active chat from cache or loads from DB."""
+    if user_id in user_chats:
+        return user_chats[user_id]
+
+    with SessionLocal() as session:
+        chat_session = crud.get_chat_session(session, user_id)
+        history = []
+        if chat_session and chat_session.history_json:
+            history = deserialize_history(chat_session.history_json)
+
+    try:
+        new_chat = client.chats.create(model=model_name, history=history)
+        user_chats[user_id] = new_chat
+        return new_chat
+    except Exception as e:
+        print(f"Error creating chat with history: {e}. Starting fresh.")
+        new_chat = client.chats.create(model=model_name)
+        user_chats[user_id] = new_chat
+        return new_chat
+
+def save_active_chat(user_id):
+    """Saves current chat history to DB."""
+    if user_id in user_chats:
+        chat = user_chats[user_id]
+        try:
+            history_data = []
+            for content in chat._curated_history:
+                 if hasattr(content, "model_dump"):
+                     history_data.append(content.model_dump())
+                 else:
+                     pass
+
+            history_json = json.dumps(history_data, cls=BytesEncoder)
+
+            with SessionLocal() as session:
+                crud.save_chat_session(session, user_id, history_json)
+        except Exception as e:
+            print(f"Error saving chat history: {e}")
+
+def get_file_context_list(user_id):
+    with SessionLocal() as session:
+        files = crud.get_file_contexts(session, user_id)
+        return [
+            {
+                "mime_type": f.mime_type,
+                "data": f.data,
+                "filename": f.filename,
+                "caption": f.caption
+            }
+            for f in files
+        ]
+
+def add_file_context_entry(user_id, file_data):
+    with SessionLocal() as session:
+        crud.add_file_context(
+            session,
+            user_id,
+            filename=file_data["filename"],
+            mime_type=file_data["mime_type"],
+            data=file_data["data"],
+            caption=file_data.get("caption")
+        )
+
+def get_message_buffer_list(user_id):
+    with SessionLocal() as session:
+        items = crud.get_buffer(session, user_id)
+        result = []
+        for item in items:
+            entry = {"type": item.item_type}
+            if item.item_type == "text":
+                entry["content"] = item.content # assuming simple text stored here
+            elif item.item_type == "photo":
+                entry["caption"] = item.content # caption stored in content
+                if item.blob_data:
+                    entry["image"] = Image.open(io.BytesIO(item.blob_data))
+            elif item.item_type == "document":
+                entry["mime_type"] = item.mime_type
+                entry["data"] = item.blob_data
+                entry["filename"] = item.filename
+                entry["caption"] = item.content
+            result.append(entry)
+        return result
+
+def add_to_message_buffer(user_id, entry):
+    with SessionLocal() as session:
+        if entry["type"] == "text":
+            crud.add_to_buffer(session, user_id, "text", content=entry["content"])
+        elif entry["type"] == "photo":
+            # Convert PIL image to bytes
+            img_byte_arr = io.BytesIO()
+            entry["image"].save(img_byte_arr, format=entry["image"].format or 'PNG')
+            img_bytes = img_byte_arr.getvalue()
+            crud.add_to_buffer(session, user_id, "photo", content=entry.get("caption"), blob_data=img_bytes)
+        elif entry["type"] == "document":
+            crud.add_to_buffer(session, user_id, "document",
+                               content=entry.get("caption"),
+                               blob_data=entry["data"],
+                               filename=entry["filename"],
+                               mime_type=entry["mime_type"])
+
+def clear_user_context_db(user_id):
+    with SessionLocal() as session:
+        crud.clear_file_contexts(session, user_id)
+        crud.clear_buffer(session, user_id)
 
 
 def load_whitelist():
@@ -91,7 +222,7 @@ def is_whitelisted(user_id):
 
 
 def ensure_user_started(func):
-    """Декоратор: проверяет, начал ли пользователь диалог командой /start."""
+    """Декоратор: проверяет, начал ли пользователь диалог командой /start (есть ли в БД)."""
 
     @wraps(func)
     def wrapper(message, *args, **kwargs):
@@ -104,24 +235,25 @@ def ensure_user_started(func):
             chat_id = message.chat.id
             is_callback = False
         else:
-
             print(
                 f"Предупреждение: ensure_user_started получил неожиданный тип: {type(message)}"
             )
             return func(message, *args, **kwargs)
 
-        if user_id not in user_models:
-            try:
-                if is_callback:
-                    bot.answer_callback_query(message.id)
-                bot.send_message(
-                    chat_id,
-                    "Пожалуйста, введите /start для начала работы.",
-                    reply_markup=telebot.types.ReplyKeyboardRemove(),
-                )
-            except Exception as e:
-                print(f"Ошибка при отправке сообщения 'введите /start': {e}")
-            return None
+        with SessionLocal() as session:
+            user = crud.get_user(session, user_id)
+            if not user:
+                try:
+                    if is_callback:
+                        bot.answer_callback_query(message.id)
+                    bot.send_message(
+                        chat_id,
+                        "Пожалуйста, введите /start для начала работы.",
+                        reply_markup=telebot.types.ReplyKeyboardRemove(),
+                    )
+                except Exception as e:
+                    print(f"Ошибка при отправке сообщения 'введите /start': {e}")
+                return None
         return func(message, *args, **kwargs)
 
     return wrapper
@@ -248,21 +380,28 @@ def handle_unlock_pro(message):
 def send_welcome(message):
     """Обрабатывает команду /start."""
     user_id = message.from_user.id
-    user_models[user_id] = DEFAULT_MODEL
-    user_chats[user_id] = client.chats.create(model=user_models[user_id])
-    user_last_responses[user_id] = None
-    user_send_modes[user_id] = SEND_MODE_IMMEDIATE
-    user_message_buffer[user_id] = []
-    user_files_context[user_id] = []
-    user_search_enabled[user_id] = True
 
-    search_enabled = user_search_enabled[user_id]
-    current_model = user_models[user_id]
+    with SessionLocal() as session:
+        # Create user with defaults if not exists
+        user = crud.get_or_create_user(session, user_id)
+        current_model = user.current_model
+        send_mode = user.send_mode
+        search_enabled = user.search_enabled
+
+        # Clear buffers/files on start
+        crud.clear_file_contexts(session, user_id)
+        crud.clear_buffer(session, user_id)
+
+    # Initialize chat session
+    get_active_chat(user_id, current_model)
+
+    user_last_responses[user_id] = None
+
     search_status_text = "Вкл ✅" if search_enabled else "Выкл ❌"
 
     greeting_text = GREETING_MESSAGE_TEMPLATE.format(
         model_name=get_model_alias(current_model),
-        send_mode=user_send_modes[user_id],
+        send_mode=send_mode,
         search_status=search_status_text,
         send_mode_immediate=SEND_MODE_IMMEDIATE,
         send_mode_manual=SEND_MODE_MANUAL,
@@ -272,7 +411,7 @@ def send_welcome(message):
         message.chat.id,
         greeting_text,
         reply_markup=get_main_keyboard(
-            user_id, user_send_modes, search_enabled, current_model
+            send_mode, search_enabled, current_model
         ),
         parse_mode="Markdown",
     )
@@ -284,25 +423,37 @@ def new_chat(message):
     """Обрабатывает нажатие кнопки "Новый чат"."""
     user_id = message.from_user.id
 
-    user_chats[user_id] = client.chats.create(model=user_models[user_id])
-    user_last_responses[user_id] = None
-    user_files_context[user_id] = []
-    user_message_buffer[user_id] = []
-    user_search_enabled[user_id] = user_search_enabled.get(user_id, False)
+    with SessionLocal() as session:
+        user = crud.get_or_create_user(session, user_id)
+        current_model = user.current_model
+        send_mode = user.send_mode
+        search_enabled = user.search_enabled
 
-    current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
-    search_enabled = user_search_enabled[user_id]
-    current_model = user_models[user_id]
+        # Clear history in DB
+        crud.clear_chat_session(session, user_id)
+        # Clear contexts
+        crud.clear_file_contexts(session, user_id)
+        crud.clear_buffer(session, user_id)
+
+    # Clear memory cache
+    if user_id in user_chats:
+        del user_chats[user_id]
+
+    # Start new
+    get_active_chat(user_id, current_model)
+
+    user_last_responses[user_id] = None
+
     search_status = "Вкл ✅" if search_enabled else "Выкл ❌"
 
     bot.send_message(
         message.chat.id,
         f"Начат новый чат. Контекст предыдущего разговора очищен.\n\n"
         f"Текущая модель: {get_model_alias(current_model)}\n"
-        f"Режим отправки: {current_mode}\n"
+        f"Режим отправки: {send_mode}\n"
         f"Поиск Google: {search_status}",
         reply_markup=get_main_keyboard(
-            user_id, user_send_modes, search_enabled, current_model
+            send_mode, search_enabled, current_model
         ),
     )
 
@@ -340,13 +491,17 @@ def get_response_as_md(message):
             txt_filename,
         )
     else:
-        search_enabled = user_search_enabled.get(user_id, False)
-        current_model = user_models.get(user_id, DEFAULT_MODEL)
+        with SessionLocal() as session:
+            user = crud.get_or_create_user(session, user_id)
+            search_enabled = user.search_enabled
+            current_model = user.current_model
+            send_mode = user.send_mode
+
         bot.send_message(
             chat_id,
             "У меня нет сохраненных ответов для отправки в виде файла.",
             reply_markup=get_main_keyboard(
-                user_id, user_send_modes, search_enabled, current_model
+                send_mode, search_enabled, current_model
             ),
         )
 
@@ -358,17 +513,27 @@ def handle_send_mode(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
 
-    current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+    with SessionLocal() as session:
+        user = crud.get_or_create_user(session, user_id)
+        current_mode = user.send_mode
 
-    new_mode = (
-        SEND_MODE_MANUAL
-        if current_mode == SEND_MODE_IMMEDIATE
-        else SEND_MODE_IMMEDIATE
-    )
+        new_mode = (
+            SEND_MODE_MANUAL
+            if current_mode == SEND_MODE_IMMEDIATE
+            else SEND_MODE_IMMEDIATE
+        )
 
-    user_send_modes[user_id] = new_mode
+        updated_user = crud.update_user_send_mode(session, user_id, new_mode)
+        new_mode = updated_user.send_mode
+        search_enabled = updated_user.search_enabled
+        current_model = updated_user.current_model
 
-    user_message_buffer[user_id] = []
+        # Clear buffer if switching to manual? No, keep it.
+        # Clear buffer if switching to immediate? Maybe send existing?
+        # Logic says: switching mode just switches future behavior.
+        # If switching from manual to immediate, buffer remains until manually cleared or sent.
+        # But 'user_message_buffer[user_id] = []' was in original code.
+        crud.clear_buffer(session, user_id)
 
     mode_message = f"Режим отправки изменен на: *{new_mode}*\n\n"
     if new_mode == SEND_MODE_MANUAL:
@@ -378,13 +543,11 @@ def handle_send_mode(message):
             "Теперь каждое ваше сообщение будет сразу отправляться в Gemini."
         )
 
-    search_enabled = user_search_enabled.get(user_id, False)
-    current_model = user_models.get(user_id, DEFAULT_MODEL)
     bot.send_message(
         chat_id,
         mode_message,
         reply_markup=get_main_keyboard(
-            user_id, user_send_modes, search_enabled, current_model
+            new_mode, search_enabled, current_model
         ),
         parse_mode="Markdown",
     )
@@ -396,17 +559,22 @@ def handle_search_command(message):
     """Переключает режим поиска Google."""
     user_id = message.from_user.id
 
-    user_search_enabled[user_id] = not user_search_enabled[user_id]
+    with SessionLocal() as session:
+        user = crud.get_or_create_user(session, user_id)
+        new_status = not user.search_enabled
+        updated_user = crud.update_user_search_enabled(session, user_id, new_status)
 
-    search_enabled = user_search_enabled[user_id]
-    current_model = user_models.get(user_id, DEFAULT_MODEL)
+        search_enabled = updated_user.search_enabled
+        send_mode = updated_user.send_mode
+        current_model = updated_user.current_model
+
     search_status = "Вкл ✅" if search_enabled else "Выкл ❌"
     bot.reply_to(
         message,
         f"🔎 Поиск Google теперь: *{search_status}*",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard(
-            user_id, user_send_modes, search_enabled, current_model
+            send_mode, search_enabled, current_model
         ),
     )
 
@@ -429,46 +597,37 @@ def handle_send_all(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
 
-    current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+    with SessionLocal() as session:
+        user = crud.get_or_create_user(session, user_id)
+        current_mode = user.send_mode
+        search_enabled = user.search_enabled
+        current_model = user.current_model
+
     if current_mode != SEND_MODE_MANUAL:
-        search_enabled = user_search_enabled.get(user_id, False)
-        current_model = user_models.get(user_id, DEFAULT_MODEL)
         bot.reply_to(
             message,
             f"Эта кнопка работает только в режиме '{SEND_MODE_MANUAL}'. "
             f"Ваш текущий режим: '{current_mode}'. Используйте /send_mode.",
             reply_markup=get_main_keyboard(
-                user_id, user_send_modes, search_enabled, current_model
+                current_mode, search_enabled, current_model
             ),
         )
         return
 
-    buffered_items = user_message_buffer.get(user_id, [])
+    buffered_items = get_message_buffer_list(user_id)
 
     if not buffered_items:
-        search_enabled = user_search_enabled.get(user_id, False)
-        current_model = user_models.get(user_id, DEFAULT_MODEL)
         bot.reply_to(
             message,
             "Буфер сообщений пуст. Нечего отправлять.",
             reply_markup=get_main_keyboard(
-                user_id, user_send_modes, search_enabled, current_model
+                current_mode, search_enabled, current_model
             ),
         )
         return
 
-    if user_id not in user_chats:
-        search_enabled = user_search_enabled.get(user_id, False)
-        current_model = user_models.get(user_id, DEFAULT_MODEL)
-        bot.reply_to(
-            message,
-            "Ошибка: сессия чата не найдена. Пожалуйста, начните новый чат.",
-            reply_markup=get_main_keyboard(
-                user_id, user_send_modes, search_enabled, current_model
-            ),
-        )
-        user_message_buffer[user_id] = []
-        return
+    # Load/Ensure chat exists
+    chat_session = get_active_chat(user_id, current_model)
 
     combined_parts = []
     current_text_block = ""
@@ -516,16 +675,14 @@ def handle_send_all(message):
         combined_parts.append(current_text_block)
 
     if not combined_parts:
-        search_enabled = user_search_enabled.get(user_id, False)
-        current_model = user_models.get(user_id, DEFAULT_MODEL)
         bot.reply_to(
             message,
             "Не удалось сформировать сообщение для отправки из буфера (возможно, он пуст или содержит только пустые элементы).",
             reply_markup=get_main_keyboard(
-                user_id, user_send_modes, search_enabled, current_model
+                current_mode, search_enabled, current_model
             ),
         )
-        user_message_buffer[user_id] = []
+        clear_user_context_db(user_id)
         return
 
     bot.send_chat_action(chat_id, "typing")
@@ -534,22 +691,21 @@ def handle_send_all(message):
     )
 
     try:
-        current_model = user_models.get(user_id, DEFAULT_MODEL)
         if is_image_generation_model(current_model):
             gemini_config = GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"]
             )
         else:
             tools = [Tool(url_context=genai_types.UrlContext())]
-            if user_search_enabled.get(user_id, False):
+            if search_enabled:
                 tools.append(Tool(google_search=GoogleSearch()))
             gemini_config = GenerateContentConfig(tools=tools)
 
-        response = user_chats[user_id].send_message(
+        response = chat_session.send_message(
             message=combined_parts, config=gemini_config
         )
+        save_active_chat(user_id) # Save history
 
-        current_model = user_models.get(user_id, DEFAULT_MODEL)
         if is_image_generation_model(current_model):
             raw_response_text = send_gemini_response_with_images(
                 chat_id, response, reply_to_message_id=message.message_id
@@ -587,7 +743,10 @@ def handle_send_all(message):
         except (AttributeError, IndexError) as e:
             print(f"Не удалось извлечь источники: {e}")
 
-        user_message_buffer[user_id] = []
+        # Clear buffer after successful send
+        with SessionLocal() as session:
+             crud.clear_buffer(session, user_id)
+
         user_last_responses[user_id] = raw_response_text
 
         try:
@@ -624,10 +783,7 @@ def handle_send_all(message):
             f"Произошла ошибка при отправке: {e!s}\n\n"
             "Ваши сообщения и фото сохранены в буфере. Попробуйте позже или измените содержимое буфера.",
             reply_markup=get_main_keyboard(
-                user_id,
-                user_send_modes,
-                user_search_enabled.get(user_id, False),
-                user_models.get(user_id, DEFAULT_MODEL),
+                current_mode, search_enabled, current_model
             ),
         )
 
@@ -686,46 +842,53 @@ def handle_model_selection(call):
     PRO_MODEL_NAME = "gemini-3-pro-preview"
     IMAGE_MODEL_NAME = "gemini-2.5-flash-image-preview"
 
-    if selected_model == PRO_MODEL_NAME and not is_whitelisted(user_id):
-        bot.answer_callback_query(
-            call.id,
-            text="Доступ к про модели ограничен. Используйте /unlock_pro <Имя создателя бота>",
-        )
-        bot.send_message(
-            call.message.chat.id,
-            "Доступ к про модели ограничен. Пожалуйста, используйте команду /unlock_pro <Имя создателя бота> для разблокировки.",
-            reply_markup=get_main_keyboard(
-                user_id,
-                user_send_modes,
-                user_search_enabled.get(user_id, False),
-                user_models.get(user_id, DEFAULT_MODEL),
-            ),
-        )
-        return
+    with SessionLocal() as session:
+        user = crud.get_or_create_user(session, user_id)
 
-    if selected_model == IMAGE_MODEL_NAME and not is_whitelisted(user_id):
-        bot.answer_callback_query(
-            call.id,
-            text="Доступ к модели генерации изображений ограничен. Используйте /unlock_pro <Имя создателя бота>",
-        )
-        bot.send_message(
-            call.message.chat.id,
-            "Доступ к модели генерации изображений ограничен. Пожалуйста, используйте команду /unlock_pro <Имя создателя бота> для разблокировки.",
-            reply_markup=get_main_keyboard(
-                user_id,
-                user_send_modes,
-                user_search_enabled.get(user_id, False),
-                user_models.get(user_id, DEFAULT_MODEL),
-            ),
-        )
-        return
+        if selected_model == PRO_MODEL_NAME and not is_whitelisted(user_id):
+            bot.answer_callback_query(
+                call.id,
+                text="Доступ к про модели ограничен. Используйте /unlock_pro <Имя создателя бота>",
+            )
+            bot.send_message(
+                call.message.chat.id,
+                "Доступ к про модели ограничен. Пожалуйста, используйте команду /unlock_pro <Имя создателя бота> для разблокировки.",
+                reply_markup=get_main_keyboard(
+                    user.send_mode, user.search_enabled, user.current_model
+                ),
+            )
+            return
 
-    user_models[user_id] = selected_model
+        if selected_model == IMAGE_MODEL_NAME and not is_whitelisted(user_id):
+            bot.answer_callback_query(
+                call.id,
+                text="Доступ к модели генерации изображений ограничен. Используйте /unlock_pro <Имя создателя бота>",
+            )
+            bot.send_message(
+                call.message.chat.id,
+                "Доступ к модели генерации изображений ограничен. Пожалуйста, используйте команду /unlock_pro <Имя создателя бота> для разблокировки.",
+                reply_markup=get_main_keyboard(
+                    user.send_mode, user.search_enabled, user.current_model
+                ),
+            )
+            return
 
-    user_chats[user_id] = client.chats.create(model=user_models[user_id])
+        updated_user = crud.update_user_model(session, user_id, selected_model)
+        current_model = updated_user.current_model
+        send_mode = updated_user.send_mode
+        search_enabled = updated_user.search_enabled
+
+        # Clear DB session and context when switching models
+        crud.clear_chat_session(session, user_id)
+        crud.clear_file_contexts(session, user_id)
+        crud.clear_buffer(session, user_id)
+
+    # Recreate chat (this will be fresh because we cleared DB)
+    if user_id in user_chats:
+        del user_chats[user_id]
+    get_active_chat(user_id, current_model)
+
     user_last_responses[user_id] = None
-    user_files_context[user_id] = []
-    user_message_buffer[user_id] = []
 
     bot.answer_callback_query(call.id)
     bot.edit_message_text(
@@ -737,13 +900,11 @@ def handle_model_selection(call):
         ),
     )
 
-    search_enabled = user_search_enabled.get(user_id, False)
-    current_model = user_models.get(user_id, DEFAULT_MODEL)
     bot.send_message(
         call.message.chat.id,
         "Можете начать новый диалог.",
         reply_markup=get_main_keyboard(
-            user_id, user_send_modes, search_enabled, current_model
+            send_mode, search_enabled, current_model
         ),
     )
 
@@ -754,6 +915,12 @@ def handle_document(message):
     """Обрабатывает входящие документы поддерживаемых типов, сохраняя их в контекст."""
     user_id = message.from_user.id
     chat_id = message.chat.id
+
+    with SessionLocal() as session:
+        user = crud.get_or_create_user(session, user_id)
+        current_mode = user.send_mode
+        search_enabled = user.search_enabled
+        current_model = user.current_model
 
     doc_mime_type = message.document.mime_type
     if doc_mime_type in SUPPORTED_MIME_TYPES:
@@ -767,10 +934,7 @@ def handle_document(message):
                     f"❌ Файл '{message.document.file_name}' слишком большой "
                     f"(> {MAX_FILE_SIZE_MB} МБ). Я могу обрабатывать файлы размером до {MAX_FILE_SIZE_MB} МБ.",
                     reply_markup=get_main_keyboard(
-                        user_id,
-                        user_send_modes,
-                        user_search_enabled.get(user_id, False),
-                        user_models.get(user_id, DEFAULT_MODEL),
+                        current_mode, search_enabled, current_model
                     ),
                 )
                 return
@@ -787,20 +951,20 @@ def handle_document(message):
                 "caption": caption,
             }
 
-            if user_id not in user_files_context:
-                user_files_context[user_id] = []
-            user_files_context[user_id].append(file_data)
-            context_count = len(user_files_context[user_id])
+            # Save to DB (File Context)
+            add_file_context_entry(user_id, file_data)
 
-            current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+            # Get count from DB
+            with SessionLocal() as session:
+                context_count = len(crud.get_file_contexts(session, user_id))
 
             if current_mode == SEND_MODE_MANUAL:
-                if user_id not in user_message_buffer:
-                    user_message_buffer[user_id] = []
-                user_message_buffer[user_id].append(
-                    {**file_data, "type": "document"}
-                )
-                buffer_count = len(user_message_buffer[user_id])
+                # Add to buffer as well
+                add_to_message_buffer(user_id, {**file_data, "type": "document"})
+
+                with SessionLocal() as session:
+                    buffer_count = len(crud.get_buffer(session, user_id))
+
                 file_type_short = doc_mime_type.split("/")[-1].upper()
                 bot.reply_to(
                     message,
@@ -809,10 +973,7 @@ def handle_document(message):
                     + f"Всего файлов в контексте: {context_count}.\n"
                     + "Нажмите 'Отправить всё', когда будете готовы.",
                     reply_markup=get_main_keyboard(
-                        user_id,
-                        user_send_modes,
-                        user_search_enabled.get(user_id, False),
-                        user_models.get(user_id, DEFAULT_MODEL),
+                        current_mode, search_enabled, current_model
                     ),
                 )
             else:
@@ -822,10 +983,7 @@ def handle_document(message):
                     f"✅ Файл '{filename}' ({file_type_short}) добавлен в контекст (всего: {context_count}). "
                     "Он будет автоматически использован при следующем текстовом запросе.",
                     reply_markup=get_main_keyboard(
-                        user_id,
-                        user_send_modes,
-                        user_search_enabled.get(user_id, False),
-                        user_models.get(user_id, DEFAULT_MODEL),
+                        current_mode, search_enabled, current_model
                     ),
                 )
 
@@ -834,10 +992,7 @@ def handle_document(message):
                 message,
                 f"Не удалось обработать файл '{message.document.file_name}': {e!s}",
                 reply_markup=get_main_keyboard(
-                    user_id,
-                    user_send_modes,
-                    user_search_enabled.get(user_id, False),
-                    user_models.get(user_id, DEFAULT_MODEL),
+                    current_mode, search_enabled, current_model
                 ),
             )
     else:
@@ -854,10 +1009,7 @@ def handle_document(message):
             message,
             f"Извините, я не могу обработать этот тип файла ({doc_mime_type}). \nПоддерживаемые типы: {supported_types_str}",
             reply_markup=get_main_keyboard(
-                user_id,
-                user_send_modes,
-                user_search_enabled.get(user_id, False),
-                user_models.get(user_id, DEFAULT_MODEL),
+                current_mode, search_enabled, current_model
             ),
         )
 
@@ -868,7 +1020,11 @@ def handle_photo(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
 
-    current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+    with SessionLocal() as session:
+        user = crud.get_or_create_user(session, user_id)
+        current_mode = user.send_mode
+        search_enabled = user.search_enabled
+        current_model = user.current_model
 
     file_id = message.photo[-1].file_id
     caption = message.caption if message.caption else ""
@@ -878,22 +1034,18 @@ def handle_photo(message):
             image_stream = download_telegram_image(file_id)
             img = Image.open(image_stream)
 
-            if user_id not in user_message_buffer:
-                user_message_buffer[user_id] = []
-            user_message_buffer[user_id].append(
-                {"type": "photo", "image": img, "caption": caption}
-            )
-            buffer_count = len(user_message_buffer[user_id])
+            add_to_message_buffer(user_id, {"type": "photo", "image": img, "caption": caption})
+
+            with SessionLocal() as session:
+                buffer_count = len(crud.get_buffer(session, user_id))
+
             bot.reply_to(
                 message,
                 f"Фото добавлено в буфер ({buffer_count} шт.). "
                 + ("Подпись также добавлена.\n" if caption else "\n")
                 + "Нажмите 'Отправить всё', когда будете готовы.",
                 reply_markup=get_main_keyboard(
-                    user_id,
-                    user_send_modes,
-                    user_search_enabled.get(user_id, False),
-                    user_models.get(user_id, DEFAULT_MODEL),
+                    current_mode, search_enabled, current_model
                 ),
             )
         except Exception as e:
@@ -901,33 +1053,12 @@ def handle_photo(message):
                 message,
                 f"Не удалось добавить фото в буфер: {e!s}",
                 reply_markup=get_main_keyboard(
-                    user_id,
-                    user_send_modes,
-                    user_search_enabled.get(user_id, False),
-                    user_models.get(user_id, DEFAULT_MODEL),
+                    current_mode, search_enabled, current_model
                 ),
             )
         return
 
-    if user_id not in user_chats:
-        try:
-
-            user_chats[user_id] = client.chats.create(
-                model=user_models[user_id]
-            )
-            user_last_responses[user_id] = None
-        except Exception as e:
-            bot.reply_to(
-                message,
-                f"Не удалось инициализировать чат перед отправкой фото: {e!s}",
-                reply_markup=get_main_keyboard(
-                    user_id,
-                    user_send_modes,
-                    user_search_enabled.get(user_id, False),
-                    user_models.get(user_id, DEFAULT_MODEL),
-                ),
-            )
-            return
+    chat_session = get_active_chat(user_id, current_model)
 
     bot.send_chat_action(chat_id, "typing")
     try:
@@ -940,9 +1071,6 @@ def handle_photo(message):
             api_message_parts.append(caption)
         api_message_parts.append(img)
 
-        chat_session = user_chats[user_id]
-
-        current_model = user_models.get(user_id, DEFAULT_MODEL)
         if is_image_generation_model(current_model):
             gemini_config = GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"]
@@ -952,6 +1080,7 @@ def handle_photo(message):
             )
         else:
             response = chat_session.send_message(message=api_message_parts)
+        save_active_chat(user_id) # Save
 
         if is_image_generation_model(current_model):
             raw_response_text = send_gemini_response_with_images(
@@ -982,13 +1111,10 @@ def handle_photo(message):
     except Exception as e:
         bot.reply_to(
             message,
-            f"Произошла ошибка при обработке изображения ({user_models.get(user_id, 'неизвестно')}): {e!s}\n\n"
+            f"Произошла ошибка при обработке изображения ({current_model}): {e!s}\n\n"
             "Возможно, стоит попробовать новый чат.",
             reply_markup=get_main_keyboard(
-                user_id,
-                user_send_modes,
-                user_search_enabled.get(user_id, False),
-                user_models.get(user_id, DEFAULT_MODEL),
+                current_mode, search_enabled, current_model
             ),
         )
 
@@ -1099,15 +1225,19 @@ def handle_message(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
 
-    current_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
+    with SessionLocal() as session:
+        user = crud.get_or_create_user(session, user_id)
+        current_mode = user.send_mode
+        search_enabled = user.search_enabled
+        current_model = user.current_model
 
     if current_mode == SEND_MODE_MANUAL:
-        if user_id not in user_message_buffer:
-            user_message_buffer[user_id] = []
-        user_message_buffer[user_id].append(
-            {"type": "text", "content": message.text}
-        )
-        buffer_count = len(user_message_buffer[user_id])
+        # Add to buffer in DB
+        add_to_message_buffer(user_id, {"type": "text", "content": message.text})
+
+        with SessionLocal() as session:
+             buffer_count = len(crud.get_buffer(session, user_id))
+
         bot.reply_to(
             message,
             f"Сообщение добавлено в буфер ({buffer_count} шт.). Нажмите 'Отправить всё', когда будете готовы.",
@@ -1120,7 +1250,7 @@ def handle_message(message):
 
         api_message_parts = []
 
-        files_in_context = user_files_context.get(user_id, [])
+        files_in_context = get_file_context_list(user_id)
         if files_in_context:
             bot.send_message(
                 chat_id,
@@ -1150,35 +1280,24 @@ def handle_message(message):
 
         api_message_parts.append(message.text)
 
-        if user_id not in user_chats:
+        # Load chat from cache or DB
+        chat_session = get_active_chat(user_id, current_model)
 
-            try:
-                user_chats[user_id] = client.chats.create(
-                    model=user_models[user_id]
-                )
-            except Exception as e:
-                bot.reply_to(
-                    message,
-                    f"Ошибка инициализации чата перед отправкой: {e!s}",
-                )
-                return
-
-        current_model = user_models.get(user_id, DEFAULT_MODEL)
         if is_image_generation_model(current_model):
             gemini_config = GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"]
             )
         else:
             tools = [Tool(url_context=genai_types.UrlContext())]
-            if user_search_enabled.get(user_id, False):
+            if search_enabled:
                 tools.append(Tool(google_search=GoogleSearch()))
             gemini_config = GenerateContentConfig(tools=tools)
 
-        response = user_chats[user_id].send_message(
+        response = chat_session.send_message(
             message=api_message_parts, config=gemini_config
         )
+        save_active_chat(user_id) # Save history
 
-        current_model = user_models.get(user_id, DEFAULT_MODEL)
         if is_image_generation_model(current_model):
             raw_response_text = send_gemini_response_with_images(
                 message.chat.id,
@@ -1244,14 +1363,12 @@ def handle_message(message):
             f"Произошла ошибка: {e!s}\n\nВозможно стоит "
             f"попробовать другую модель или начать новый чат.",
             reply_markup=get_main_keyboard(
-                user_id,
-                user_send_modes,
-                user_search_enabled.get(user_id, False),
-                user_models.get(user_id, DEFAULT_MODEL),
+                current_mode, search_enabled, current_model
             ),
         )
 
 
 if __name__ == "__main__":
+    db.init_db()
     load_whitelist()
     bot.polling(none_stop=True)

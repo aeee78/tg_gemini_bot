@@ -10,17 +10,16 @@ from constants import (
 
 
 def get_main_keyboard(
-    user_id, user_send_modes, search_enabled: bool, current_model: str
+    send_mode: str, search_enabled: bool, current_model: str
 ):
     """Создает основную клавиатуру с динамическим текстом кнопок."""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Новый чат"))
 
-    current_send_mode = user_send_modes.get(user_id, SEND_MODE_IMMEDIATE)
     search_status_text = "Вкл ✅" if search_enabled else "Выкл ❌"
 
     model_button_text = f"Модель: {get_model_alias(current_model)}"
-    send_mode_button_text = f"Режим: {current_send_mode}"
+    send_mode_button_text = f"Режим: {send_mode}"
     search_button_text = f"Поиск: {search_status_text}"
 
     keyboard.add(
@@ -32,7 +31,7 @@ def get_main_keyboard(
         types.KeyboardButton(search_button_text),
     )
 
-    if current_send_mode == SEND_MODE_MANUAL:
+    if send_mode == SEND_MODE_MANUAL:
         keyboard.add(types.KeyboardButton("Отправить всё"))
 
     return keyboard
