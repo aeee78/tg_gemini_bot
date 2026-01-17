@@ -13,8 +13,8 @@ class User(Base):
 
     # Relationships
     chat_session = relationship("ChatSession", back_populates="user", uselist=False)
-    file_contexts = relationship("FileContext", back_populates="user")
-    message_buffer = relationship("MessageBuffer", back_populates="user")
+    file_contexts = relationship("FileContext", back_populates="user", cascade="all, delete-orphan")
+    message_buffer = relationship("MessageBuffer", back_populates="user", cascade="all, delete-orphan")
 
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
