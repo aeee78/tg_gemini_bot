@@ -3,9 +3,10 @@ import json
 import base64
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from database import models, crud
+from database import crud
 from database.db import Base
 from utils import BytesEncoder
+from constants import DEFAULT_MODEL
 
 # Use in-memory DB for tests
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -26,7 +27,7 @@ class TestPersistenceIntegration(unittest.TestCase):
         # Create
         user = crud.get_or_create_user(self.db, self.user_id)
         self.assertEqual(user.id, self.user_id)
-        self.assertEqual(user.current_model, "gemini-3-flash-preview") # Default
+        self.assertEqual(user.current_model, DEFAULT_MODEL) # Default
 
         # Update
         updated = crud.update_user_model(self.db, self.user_id, "gemini-pro")

@@ -9,7 +9,7 @@ class User(Base):
     id = Column(BigInteger, primary_key=True, index=True)  # Telegram User ID
     current_model = Column(String, default=DEFAULT_MODEL)
     send_mode = Column(String, default=SEND_MODE_IMMEDIATE)
-    search_enabled = Column(Boolean, default=False)
+    search_enabled = Column(Boolean, default=True)
 
     # Relationships
     chat_session = relationship("ChatSession", back_populates="user", uselist=False)

@@ -1,6 +1,5 @@
 from sqlalchemy.orm import Session
 from database.models import User, ChatSession, FileContext, MessageBuffer
-from constants import DEFAULT_MODEL, SEND_MODE_IMMEDIATE
 
 # User Operations
 def get_user(db: Session, user_id: int):
@@ -78,7 +77,7 @@ def add_file_context(db: Session, user_id: int, filename: str, mime_type: str, d
     return file_ctx
 
 def get_file_contexts(db: Session, user_id: int):
-    return db.query(FileContext).filter(FileContext.user_id == user_id).all()
+    return db.query(FileContext).filter(FileContext.user_id == user_id).order_by(FileContext.id).all()
 
 def clear_file_contexts(db: Session, user_id: int):
     db.query(FileContext).filter(FileContext.user_id == user_id).delete()
@@ -100,7 +99,7 @@ def add_to_buffer(db: Session, user_id: int, item_type: str, content: str = None
     return item
 
 def get_buffer(db: Session, user_id: int):
-    return db.query(MessageBuffer).filter(MessageBuffer.user_id == user_id).all()
+    return db.query(MessageBuffer).filter(MessageBuffer.user_id == user_id).order_by(MessageBuffer.id).all()
 
 def clear_buffer(db: Session, user_id: int):
     db.query(MessageBuffer).filter(MessageBuffer.user_id == user_id).delete()

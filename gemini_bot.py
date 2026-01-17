@@ -71,6 +71,7 @@ def deserialize_history(history_json):
                         try:
                             blob_data["data"] = base64.b64decode(blob_data["data"])
                         except Exception:
+                            # Already bytes or invalid base64, leaving as is
                             pass
                 parts.append(genai_types.Part(**part_data))
             history.append(genai_types.Content(role=item.get("role"), parts=parts))
@@ -107,10 +108,10 @@ def save_active_chat(user_id):
         try:
             history_data = []
             for content in chat._curated_history:
-                 if hasattr(content, "model_dump"):
-                     history_data.append(content.model_dump())
-                 else:
-                     pass
+                if hasattr(content, "model_dump"):
+                    history_data.append(content.model_dump())
+                else:
+                    pass
 
             history_json = json.dumps(history_data, cls=BytesEncoder)
 
@@ -745,7 +746,7 @@ def handle_send_all(message):
 
         # Clear buffer after successful send
         with SessionLocal() as session:
-             crud.clear_buffer(session, user_id)
+            crud.clear_buffer(session, user_id)
 
         user_last_responses[user_id] = raw_response_text
 
@@ -1236,7 +1237,7 @@ def handle_message(message):
         add_to_message_buffer(user_id, {"type": "text", "content": message.text})
 
         with SessionLocal() as session:
-             buffer_count = len(crud.get_buffer(session, user_id))
+            buffer_count = len(crud.get_buffer(session, user_id))
 
         bot.reply_to(
             message,
