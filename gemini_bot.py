@@ -47,13 +47,14 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 bot.set_my_commands(COMMAND_LIST)
 
 # Global stores
-user_chats = {} # Cache for active chat sessions
+user_chats = {}  # Cache for active chat sessions
 user_last_responses = {}
 
 WHITELIST_FILE = "whitelist.txt"
 whitelisted_users = set()
 
 # --- Helper Functions for Persistence ---
+
 
 def deserialize_history(history_json):
     """Deserializes JSON history into list of types.Content."""
@@ -67,18 +68,25 @@ def deserialize_history(history_json):
             for part_data in item.get("parts", []):
                 if "inline_data" in part_data and part_data["inline_data"]:
                     blob_data = part_data["inline_data"]
-                    if "data" in blob_data and isinstance(blob_data["data"], str):
+                    if "data" in blob_data and isinstance(
+                        blob_data["data"], str
+                    ):
                         try:
-                            blob_data["data"] = base64.b64decode(blob_data["data"])
+                            blob_data["data"] = base64.b64decode(
+                                blob_data["data"]
+                            )
                         except Exception:
                             # Already bytes or invalid base64, leaving as is
                             pass
                 parts.append(genai_types.Part(**part_data))
-            history.append(genai_types.Content(role=item.get("role"), parts=parts))
+            history.append(
+                genai_types.Content(role=item.get("role"), parts=parts)
+            )
         return history
     except Exception as e:
         print(f"Error deserializing history: {e}")
         return []
+
 
 def get_active_chat(user_id, model_name):
     """Gets active chat from cache or loads from DB."""
@@ -101,6 +109,7 @@ def get_active_chat(user_id, model_name):
         user_chats[user_id] = new_chat
         return new_chat
 
+
 def save_active_chat(user_id):
     """Saves current chat history to DB."""
     if user_id in user_chats:
@@ -120,6 +129,7 @@ def save_active_chat(user_id):
         except Exception as e:
             print(f"Error saving chat history: {e}")
 
+
 def get_file_context_list(user_id):
     with SessionLocal() as session:
         files = crud.get_file_contexts(session, user_id)
@@ -128,10 +138,11 @@ def get_file_context_list(user_id):
                 "mime_type": f.mime_type,
                 "data": f.data,
                 "filename": f.filename,
-                "caption": f.caption
+                "caption": f.caption,
             }
             for f in files
         ]
+
 
 def add_file_context_entry(user_id, file_data):
     with SessionLocal() as session:
@@ -141,8 +152,9 @@ def add_file_context_entry(user_id, file_data):
             filename=file_data["filename"],
             mime_type=file_data["mime_type"],
             data=file_data["data"],
-            caption=file_data.get("caption")
+            caption=file_data.get("caption"),
         )
+
 
 def get_message_buffer_list(user_id):
     with SessionLocal() as session:
@@ -164,22 +176,38 @@ def get_message_buffer_list(user_id):
             result.append(entry)
         return result
 
+
 def add_to_message_buffer(user_id, entry):
     with SessionLocal() as session:
         if entry["type"] == "text":
-            crud.add_to_buffer(session, user_id, "text", content=entry["content"])
+            crud.add_to_buffer(
+                session, user_id, "text", content=entry["content"]
+            )
         elif entry["type"] == "photo":
             # Convert PIL image to bytes
             img_byte_arr = io.BytesIO()
-            entry["image"].save(img_byte_arr, format=entry["image"].format or 'PNG')
+            entry["image"].save(
+                img_byte_arr, format=entry["image"].format or "PNG"
+            )
             img_bytes = img_byte_arr.getvalue()
-            crud.add_to_buffer(session, user_id, "photo", content=entry.get("caption"), blob_data=img_bytes)
+            crud.add_to_buffer(
+                session,
+                user_id,
+                "photo",
+                content=entry.get("caption"),
+                blob_data=img_bytes,
+            )
         elif entry["type"] == "document":
-            crud.add_to_buffer(session, user_id, "document",
-                               content=entry.get("caption"),
-                               blob_data=entry["data"],
-                               filename=entry["filename"],
-                               mime_type=entry["mime_type"])
+            crud.add_to_buffer(
+                session,
+                user_id,
+                "document",
+                content=entry.get("caption"),
+                blob_data=entry["data"],
+                filename=entry["filename"],
+                mime_type=entry["mime_type"],
+            )
+
 
 def clear_user_context_db(user_id):
     with SessionLocal() as session:
@@ -253,7 +281,9 @@ def ensure_user_started(func):
                         reply_markup=telebot.types.ReplyKeyboardRemove(),
                     )
                 except Exception as e:
-                    print(f"Ошибка при отправке сообщения 'введите /start': {e}")
+                    print(
+                        f"Ошибка при отправке сообщения 'введите /start': {e}"
+                    )
                 return None
         return func(message, *args, **kwargs)
 
@@ -474,7 +504,9 @@ def get_response_as_md(message):
         words = raw_response.split()
         filename_base = "_".join(words[:3]) if len(words) > 0 else "response"
         filename_base = (
-            filename_base.replace("/", "_").replace("\\", "_").replace(":", "_")
+            filename_base.replace("/", "_")
+            .replace("\\", "_")
+            .replace(":", "_")
         )
 
         md_filename = f"{filename_base}.md"
@@ -563,7 +595,9 @@ def handle_search_command(message):
     with SessionLocal() as session:
         user = crud.get_or_create_user(session, user_id)
         new_status = not user.search_enabled
-        updated_user = crud.update_user_search_enabled(session, user_id, new_status)
+        updated_user = crud.update_user_search_enabled(
+            session, user_id, new_status
+        )
 
         search_enabled = updated_user.search_enabled
         send_mode = updated_user.send_mode
@@ -705,7 +739,7 @@ def handle_send_all(message):
         response = chat_session.send_message(
             message=combined_parts, config=gemini_config
         )
-        save_active_chat(user_id) # Save history
+        save_active_chat(user_id)  # Save history
 
         if is_image_generation_model(current_model):
             raw_response_text = send_gemini_response_with_images(
@@ -961,7 +995,9 @@ def handle_document(message):
 
             if current_mode == SEND_MODE_MANUAL:
                 # Add to buffer as well
-                add_to_message_buffer(user_id, {**file_data, "type": "document"})
+                add_to_message_buffer(
+                    user_id, {**file_data, "type": "document"}
+                )
 
                 with SessionLocal() as session:
                     buffer_count = len(crud.get_buffer(session, user_id))
@@ -1035,7 +1071,9 @@ def handle_photo(message):
             image_stream = download_telegram_image(file_id)
             img = Image.open(image_stream)
 
-            add_to_message_buffer(user_id, {"type": "photo", "image": img, "caption": caption})
+            add_to_message_buffer(
+                user_id, {"type": "photo", "image": img, "caption": caption}
+            )
 
             with SessionLocal() as session:
                 buffer_count = len(crud.get_buffer(session, user_id))
@@ -1081,7 +1119,7 @@ def handle_photo(message):
             )
         else:
             response = chat_session.send_message(message=api_message_parts)
-        save_active_chat(user_id) # Save
+        save_active_chat(user_id)  # Save
 
         if is_image_generation_model(current_model):
             raw_response_text = send_gemini_response_with_images(
@@ -1163,7 +1201,10 @@ def handle_quick_tool_command(message):
 
     try:
         config_kwargs = {"system_instruction": system_instruction}
-        if model_to_use == "gemini-3-flash-preview" and thinking_budget is not None:
+        if (
+            model_to_use == "gemini-3-flash-preview"
+            and thinking_budget is not None
+        ):
             config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
                 thinking_budget=thinking_budget
             )
@@ -1234,7 +1275,9 @@ def handle_message(message):
 
     if current_mode == SEND_MODE_MANUAL:
         # Add to buffer in DB
-        add_to_message_buffer(user_id, {"type": "text", "content": message.text})
+        add_to_message_buffer(
+            user_id, {"type": "text", "content": message.text}
+        )
 
         with SessionLocal() as session:
             buffer_count = len(crud.get_buffer(session, user_id))
@@ -1297,7 +1340,7 @@ def handle_message(message):
         response = chat_session.send_message(
             message=api_message_parts, config=gemini_config
         )
-        save_active_chat(user_id) # Save history
+        save_active_chat(user_id)  # Save history
 
         # Clear file contexts after successful immediate-mode send
         if files_in_context:

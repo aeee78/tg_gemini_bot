@@ -8,6 +8,7 @@ engine = create_engine(
     connect_args={"check_same_thread": False, "timeout": 30},
 )
 
+
 def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     try:
@@ -15,11 +16,13 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     finally:
         cursor.close()
 
+
 event.listen(engine, "connect", set_sqlite_pragma)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+
 
 def init_db():
     Base.metadata.create_all(bind=engine)

@@ -1,6 +1,6 @@
-
 import unittest
 from utils import markdown_to_text, split_long_message
+
 
 class TestUtils(unittest.TestCase):
     def test_markdown_to_text_basic(self):
@@ -52,6 +52,7 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(len(parts), 2)
         self.assertEqual(parts[0], "Para 1\n\n")
         self.assertEqual(parts[1], "Para 2\n\n")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,6 @@ from telebot import types
 from constants import (
     AVAILABLE_MODELS,
     MODEL_ALIASES,
-    SEND_MODE_IMMEDIATE,
     SEND_MODE_MANUAL,
     get_model_alias,
 )
