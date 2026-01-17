@@ -1299,6 +1299,10 @@ def handle_message(message):
         )
         save_active_chat(user_id) # Save history
 
+        # Clear file contexts after successful immediate-mode send
+        if files_in_context:
+            with SessionLocal() as session:
+                crud.clear_file_contexts(session, user_id)
         if is_image_generation_model(current_model):
             raw_response_text = send_gemini_response_with_images(
                 message.chat.id,
