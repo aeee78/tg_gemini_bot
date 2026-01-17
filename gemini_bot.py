@@ -31,6 +31,7 @@ from keyboards import (
     get_file_download_keyboard,
     get_main_keyboard,
     get_model_selection_keyboard,
+    get_settings_keyboard,
 )
 from functools import wraps
 
@@ -586,11 +587,29 @@ def handle_send_mode(message):
     )
 
 
-@bot.message_handler(func=lambda message: message.text.startswith("Поиск:"))
+@bot.message_handler(func=lambda message: message.text == "Настройки ⚙️")
 @ensure_user_started
-def handle_search_command(message):
-    """Переключает режим поиска Google."""
+def handle_settings_button(message):
+    """Обрабатывает нажатие кнопки 'Настройки ⚙️'."""
     user_id = message.from_user.id
+
+    with SessionLocal() as session:
+        user = crud.get_or_create_user(session, user_id)
+        search_enabled = user.search_enabled
+
+    bot.send_message(
+        message.chat.id,
+        "⚙️ *Настройки бота*",
+        parse_mode="Markdown",
+        reply_markup=get_settings_keyboard(search_enabled),
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "toggle_search")
+@ensure_user_started
+def handle_toggle_search(call):
+    """Переключает настройку поиска через инлайн-кнопку."""
+    user_id = call.from_user.id
 
     with SessionLocal() as session:
         user = crud.get_or_create_user(session, user_id)
@@ -598,20 +617,27 @@ def handle_search_command(message):
         updated_user = crud.update_user_search_enabled(
             session, user_id, new_status
         )
-
         search_enabled = updated_user.search_enabled
-        send_mode = updated_user.send_mode
-        current_model = updated_user.current_model
 
-    search_status = "Вкл ✅" if search_enabled else "Выкл ❌"
-    bot.reply_to(
-        message,
-        f"🔎 Поиск Google теперь: *{search_status}*",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard(
-            send_mode, search_enabled, current_model
-        ),
+    bot.edit_message_reply_markup(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        reply_markup=get_settings_keyboard(search_enabled),
     )
+
+    status_text = "Включен ✅" if search_enabled else "Выключен ❌"
+    bot.answer_callback_query(call.id, f"Поиск {status_text}")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "close_settings")
+@ensure_user_started
+def handle_close_settings(call):
+    """Закрывает меню настроек."""
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception as e:
+        print(f"Error deleting settings message: {e}")
+        bot.answer_callback_query(call.id)
 
 
 @bot.message_handler(func=lambda message: message.text.startswith("Модель:"))
