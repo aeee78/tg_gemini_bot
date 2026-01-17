@@ -15,11 +15,8 @@ def get_main_keyboard(
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(types.KeyboardButton("Новый чат"))
 
-    search_status_text = "Вкл ✅" if search_enabled else "Выкл ❌"
-
     model_button_text = f"Модель: {get_model_alias(current_model)}"
     send_mode_button_text = f"Режим: {send_mode}"
-    search_button_text = f"Поиск: {search_status_text}"
 
     keyboard.add(
         types.KeyboardButton(model_button_text),
@@ -27,12 +24,33 @@ def get_main_keyboard(
     )
     keyboard.add(
         types.KeyboardButton("Получить .MD 📄"),
-        types.KeyboardButton(search_button_text),
+        types.KeyboardButton("Настройки ⚙️"),
     )
 
     if send_mode == SEND_MODE_MANUAL:
         keyboard.add(types.KeyboardButton("Отправить всё"))
 
+    return keyboard
+
+
+def get_settings_keyboard(search_enabled: bool):
+    """Создает клавиатуру настроек."""
+    keyboard = types.InlineKeyboardMarkup()
+
+    search_text = "Поиск Google: Вкл ✅" if search_enabled else "Поиск Google: Выкл ❌"
+
+    keyboard.add(
+        types.InlineKeyboardButton(
+            text=search_text,
+            callback_data="toggle_search"
+        )
+    )
+    keyboard.add(
+        types.InlineKeyboardButton(
+            text="Закрыть ❌",
+            callback_data="close_settings"
+        )
+    )
     return keyboard
 
 
