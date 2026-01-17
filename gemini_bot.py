@@ -150,9 +150,9 @@ def get_message_buffer_list(user_id):
         for item in items:
             entry = {"type": item.item_type}
             if item.item_type == "text":
-                entry["content"] = item.content # assuming simple text stored here
+                entry["content"] = item.content or ""
             elif item.item_type == "photo":
-                entry["caption"] = item.content # caption stored in content
+                entry["caption"] = item.content or ""
                 if item.blob_data:
                     entry["image"] = Image.open(io.BytesIO(item.blob_data))
             elif item.item_type == "document":
