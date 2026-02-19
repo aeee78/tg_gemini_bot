@@ -9,7 +9,9 @@ pre-commit
 .pre-commit-config.yaml
 fullcode.txt
 whitelist.txt
-bot.db
+*.db
+*.db-shm
+*.db-wal
 
 # C extensions
 *.so

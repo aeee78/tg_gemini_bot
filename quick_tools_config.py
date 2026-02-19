@@ -28,7 +28,7 @@ QUICK_TOOLS_CONFIG = {
             "prompts (if applicable), and specific instructions for the AI, while preserving "
             "the user's core intent. Provide only the improved prompt."
         ),
-        "model": "gemini-3-pro-preview",
+        "model": "gemini-3.1-pro-preview",
         "description": "🚀 PRO Улучшение промпта (запроса) для AI",
     },
     "rewrite": {
@@ -114,7 +114,7 @@ QUICK_TOOLS_CONFIG = {
             "Otherwise, return *only* the Markdown table."
         ),
         "description": "📊 Преобразовать текст в таблицу Markdown",
-        "model": "gemini-3-pro-preview",
+        "model": "gemini-3.1-pro-preview",
     },
     "todo": {
         "system_instruction": (
@@ -239,6 +239,6 @@ QUICK_TOOLS_CONFIG = {
             "This is a single-turn interaction. Process the user's request and provide the schedule in the user's language. Provide ONLY the schedule."
         ),
         "description": "📅 Умный планировщик дня (задачи, еда)",
-        "model": "gemini-3-pro-preview",
+        "model": "gemini-3.1-pro-preview",
     },
 }

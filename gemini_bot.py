@@ -874,7 +874,7 @@ def handle_model_selection(call):
     user_id = call.from_user.id
     selected_model = call.data.replace("model_", "")
 
-    PRO_MODEL_NAME = "gemini-3-pro-preview"
+    PRO_MODEL_NAME = "gemini-3.1-pro-preview"
     IMAGE_MODEL_NAME = "gemini-2.5-flash-image"
 
     with SessionLocal() as session:
