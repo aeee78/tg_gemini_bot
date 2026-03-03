@@ -9,7 +9,7 @@ QUICK_TOOLS_CONFIG = {
             "Provide *only* the translated text, without any introduction, comments, or explanations."
         ),
         "description": "ru<>en Перевод текста",
-        "model": "gemini-2.5-flash-lite",
+        "model": "gemini-3.1-flash-lite-preview",
         "thinking_budget": 0,
     },
     "prompt": {
@@ -153,29 +153,29 @@ QUICK_TOOLS_CONFIG = {
             "Based on the information provided by the user (wake-up time, bedtime, list of tasks), generate a well-thought-out hourly plan for the day, including meals (unless otherwise specified), and distribute tasks considering their presumed importance, complexity, and logical sequence. The output schedule MUST be in the same language as the user's input query.\n\n"
             "## USER INPUT:\n"
             "The user will provide the following information in their own language:\n"
-            "1.  **Wake-up time:** In HH:MM format (e.g., \"07:00\", \"I wake up at 8 am\", \"просыпаюсь в 8 утра\").\n"
-            "2.  **Bedtime:** In HH:MM format (e.g., \"23:00\", \"I go to bed at 11 pm\", \"ложусь спать в 11 вечера\").\n"
-            "3.  **List of tasks for the day:** In any order. Tasks can be formulated briefly (e.g., \"email\", \"meeting\", \"почта\", \"встреча\") or in more detail (e.g., \"prepare a presentation for Project Alpha\", \"подготовить презентацию для проекта Альфа\"). Some tasks may include an indication of their duration (e.g., \"workout 1.5 hours\", \"тренировка 1.5 часа\", \"meeting from 14:00 to 15:00\") or preferred time. The user may also specify that meals should not be included (e.g., \"no food\", \"don't plan meals\", \"lunch not needed\", \"без еды\", \"не планируй еду\", \"обед не нужен\" - user will use their own language for these phrases).\n\n"
+            '1.  **Wake-up time:** In HH:MM format (e.g., "07:00", "I wake up at 8 am", "просыпаюсь в 8 утра").\n'
+            '2.  **Bedtime:** In HH:MM format (e.g., "23:00", "I go to bed at 11 pm", "ложусь спать в 11 вечера").\n'
+            '3.  **List of tasks for the day:** In any order. Tasks can be formulated briefly (e.g., "email", "meeting", "почта", "встреча") or in more detail (e.g., "prepare a presentation for Project Alpha", "подготовить презентацию для проекта Альфа"). Some tasks may include an indication of their duration (e.g., "workout 1.5 hours", "тренировка 1.5 часа", "meeting from 14:00 to 15:00") or preferred time. The user may also specify that meals should not be included (e.g., "no food", "don\'t plan meals", "lunch not needed", "без еды", "не планируй еду", "обед не нужен" - user will use their own language for these phrases).\n\n'
             "## PROCESSING AND PLANNING LOGIC:\n\n"
             "1.  **Determine available time:** Calculate the user's total available waking hours.\n"
             "2.  **Meals (INCLUDED by default):**\n"
-            "    *   **Breakfast:** Schedule 20-40 minutes after waking up. Duration: 20-30 minutes. (Label: \"Breakfast\", \"Завтрак\", etc., according to user's language)\n"
-            "    *   **Lunch:** Schedule approximately 4-5 hours after breakfast. Duration: 45-60 minutes. (Label: \"Lunch\", \"Обед\", etc.)\n"
-            "    *   **Dinner:** Schedule approximately 4-5 hours after lunch, but no later than 2-3 hours before bedtime. Duration: 30-45 minutes. (Label: \"Dinner\", \"Ужин\", etc.)\n"
-            "    *   **Exception:** If the user explicitly states not to include meals (using phrases in their language like \"no food\", \"don't plan meals\", \"без еды\"), do not include the corresponding meals. If a specific meal is mentioned (e.g., \"no breakfast\", \"без завтрака\"), exclude only that one.\n"
+            '    *   **Breakfast:** Schedule 20-40 minutes after waking up. Duration: 20-30 minutes. (Label: "Breakfast", "Завтрак", etc., according to user\'s language)\n'
+            '    *   **Lunch:** Schedule approximately 4-5 hours after breakfast. Duration: 45-60 minutes. (Label: "Lunch", "Обед", etc.)\n'
+            '    *   **Dinner:** Schedule approximately 4-5 hours after lunch, but no later than 2-3 hours before bedtime. Duration: 30-45 minutes. (Label: "Dinner", "Ужин", etc.)\n'
+            '    *   **Exception:** If the user explicitly states not to include meals (using phrases in their language like "no food", "don\'t plan meals", "без еды"), do not include the corresponding meals. If a specific meal is mentioned (e.g., "no breakfast", "без завтрака"), exclude only that one.\n'
             "3.  **Task duration estimation:**\n"
-            "    *   **Explicitly stated duration:** If the user specifies the duration (e.g., \"run 1 hour\", \"пробежка 1 час\"), use this information.\n"
+            '    *   **Explicitly stated duration:** If the user specifies the duration (e.g., "run 1 hour", "пробежка 1 час"), use this information.\n'
             "    *   **Implicit duration:** If not specified, estimate based on typical times:\n"
             "        *   Short tasks (check email, quick call): 15-30 minutes.\n"
             "        *   Medium tasks (small meeting, work on a part of a project): 60-90 minutes.\n"
             "        *   Long tasks (deep work, study, important meeting, report): 1.5 - 3 hours. Break very large tasks into blocks.\n"
-            "        *   \"Prepare food\" (if a separate task): 30-60 minutes.\n"
+            '        *   "Prepare food" (if a separate task): 30-60 minutes.\n'
             "4.  **Task prioritization and sequencing:**\n"
-            "    *   **Explicit instructions:** If the user specifies keywords like \"important\", \"urgent\", \"first thing\", \"prepare for X\" (user will use their own language for these keywords like \"важно\", \"срочно\"), take this into account.\n"
+            '    *   **Explicit instructions:** If the user specifies keywords like "important", "urgent", "first thing", "prepare for X" (user will use their own language for these keywords like "важно", "срочно"), take this into account.\n'
             "    *   **Logic:**\n"
             "        *   High-concentration tasks: schedule during peak productivity hours.\n"
             "        *   Group similar tasks if sensible.\n"
-            "        *   Logical sequence (e.g., \"buy groceries\", then \"prepare dinner\").\n"
+            '        *   Logical sequence (e.g., "buy groceries", then "prepare dinner").\n'
             "        *   Workouts: morning or evening, based on other tasks.\n"
             "    *   **Time before bed:** Leave 1-2 hours for relaxation, unless specified otherwise. No intensive work right before bed.\n"
             "5.  **Time allocation and schedule creation:**\n"
@@ -183,13 +183,13 @@ QUICK_TOOLS_CONFIG = {
             "    *   Add meals.\n"
             "    *   Distribute remaining tasks by duration and priority.\n"
             "    *   **Breaks:** Consider short breaks (5-15 min) between long tasks, if feasible. May not be explicitly listed.\n"
-            "    *   **Conflicts/Time shortage:** If tasks exceed available time, note this at the end of the schedule in the user's language (e.g., \"Attention: Total task time may exceed available time. Consider revising.\", \"Внимание: общее время задач может превышать доступное. Рекомендую пересмотреть список.\"). Suggest solutions if appropriate.\n"
+            '    *   **Conflicts/Time shortage:** If tasks exceed available time, note this at the end of the schedule in the user\'s language (e.g., "Attention: Total task time may exceed available time. Consider revising.", "Внимание: общее время задач может превышать доступное. Рекомендую пересмотреть список."). Suggest solutions if appropriate.\n'
             "6.  **Output Format:**\n"
             "    *   **IMPORTANT: The entire output, including task descriptions, meal names, and routine labels, MUST be in the same language as the user's input query.**\n"
             "    *   Each task on a new line.\n"
             "    *   Format: `HH:MM: [Task description]` (Use 24-hour format or adapt to common local conventions if clear from user input style).\n"
-            "    *   Start with wake-up time (e.g., \"Wake up, morning routine\", \"Подъем, утренние процедуры\").\n"
-            "    *   End with bedtime (e.g., \"Prepare for bed, sleep\", \"Подготовка ко сну, отбой\").\n\n"
+            '    *   Start with wake-up time (e.g., "Wake up, morning routine", "Подъем, утренние процедуры").\n'
+            '    *   End with bedtime (e.g., "Prepare for bed, sleep", "Подготовка ко сну, отбой").\n\n'
             "## TONE AND STYLE (in user's language):\n"
             "Friendly, but business-like. Clear, structured, helpful.\n\n"
             "## INTERACTION EXAMPLES (for your understanding - generate output in user's language):\n\n"

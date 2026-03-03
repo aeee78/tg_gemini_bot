@@ -20,7 +20,7 @@ DEFAULT_MODEL = "gemini-3-flash-preview"
 AVAILABLE_MODELS = [
     "gemini-3-flash-preview",
     "gemini-3.1-pro-preview",
-    "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite-preview",
     "gemini-2.5-flash-image",
 ]
 
@@ -28,7 +28,7 @@ AVAILABLE_MODELS = [
 MODEL_ALIASES = {
     "gemini-3-flash-preview": "3 Flash 🚀",
     "gemini-3.1-pro-preview": "3.1 Pro💡",
-    "gemini-2.5-flash-lite": "2.5 Flash Lite🐣",
+    "gemini-3.1-flash-lite-preview": "3.1 Flash Lite🐣",
     "gemini-2.5-flash-image": "2.5 Flash IMG🎨 (генерация и редактирование изображений)",
 }
 
