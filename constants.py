@@ -21,7 +21,7 @@ AVAILABLE_MODELS = [
     "gemini-3-flash-preview",
     "gemini-3.1-pro-preview",
     "gemini-3.1-flash-lite-preview",
-    "gemini-2.5-flash-image",
+    "gemini-3.1-flash-image-preview",
 ]
 
 
@@ -29,7 +29,7 @@ MODEL_ALIASES = {
     "gemini-3-flash-preview": "3 Flash 🚀",
     "gemini-3.1-pro-preview": "3.1 Pro💡",
     "gemini-3.1-flash-lite-preview": "3.1 Flash Lite🐣",
-    "gemini-2.5-flash-image": "2.5 Flash IMG🎨 (генерация и редактирование изображений)",
+    "gemini-3.1-flash-image-preview": "3.1 Flash IMG🎨 (генерация и редактирование изображений)",
 }
 
 
@@ -40,7 +40,7 @@ def get_model_alias(full_name, default="Неизвестно"):
 
 def is_image_generation_model(model_name):
     """Проверяет, поддерживает ли модель генерацию изображений."""
-    return model_name == "gemini-2.5-flash-image"
+    return model_name == "gemini-3.1-flash-image-preview"
 
 
 COMMAND_LIST = [
