@@ -1,3 +1,4 @@
+import ipv4_only  # noqa: F401 E261
 import io
 import json
 import base64
@@ -68,14 +69,20 @@ def deserialize_history(history_json):
             for part_data in item.get("parts", []):
                 if "inline_data" in part_data and part_data["inline_data"]:
                     blob_data = part_data["inline_data"]
-                    if "data" in blob_data and isinstance(blob_data["data"], str):
+                    if "data" in blob_data and isinstance(
+                        blob_data["data"], str
+                    ):
                         try:
-                            blob_data["data"] = base64.b64decode(blob_data["data"])
+                            blob_data["data"] = base64.b64decode(
+                                blob_data["data"]
+                            )
                         except Exception:
                             # Already bytes or invalid base64, leaving as is
                             pass
                 parts.append(genai_types.Part(**part_data))
-            history.append(genai_types.Content(role=item.get("role"), parts=parts))
+            history.append(
+                genai_types.Content(role=item.get("role"), parts=parts)
+            )
         return history
     except Exception as e:
         print(f"Error deserializing history: {e}")
@@ -174,11 +181,15 @@ def get_message_buffer_list(user_id):
 def add_to_message_buffer(user_id, entry):
     with SessionLocal() as session:
         if entry["type"] == "text":
-            crud.add_to_buffer(session, user_id, "text", content=entry["content"])
+            crud.add_to_buffer(
+                session, user_id, "text", content=entry["content"]
+            )
         elif entry["type"] == "photo":
             # Convert PIL image to bytes
             img_byte_arr = io.BytesIO()
-            entry["image"].save(img_byte_arr, format=entry["image"].format or "PNG")
+            entry["image"].save(
+                img_byte_arr, format=entry["image"].format or "PNG"
+            )
             img_bytes = img_byte_arr.getvalue()
             crud.add_to_buffer(
                 session,
@@ -271,7 +282,9 @@ def ensure_user_started(func):
                         reply_markup=telebot.types.ReplyKeyboardRemove(),
                     )
                 except Exception as e:
-                    print(f"Ошибка при отправке сообщения 'введите /start': {e}")
+                    print(
+                        f"Ошибка при отправке сообщения 'введите /start': {e}"
+                    )
                 return None
         return func(message, *args, **kwargs)
 
@@ -281,9 +294,7 @@ def ensure_user_started(func):
 def download_telegram_image(file_id):
     """Загружает изображение из Telegram."""
     file_info = bot.get_file(file_id)
-    file_url = (
-        f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info.file_path}"
-    )
+    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info.file_path}"
     response = requests.get(file_url)
     return io.BytesIO(response.content)
 
@@ -299,14 +310,19 @@ def send_text_as_file(chat_id, text, filename="response.txt"):
     )
 
 
-def send_gemini_response_with_images(chat_id, response, reply_to_message_id=None):
+def send_gemini_response_with_images(
+    chat_id, response, reply_to_message_id=None
+):
     """Отправляет ответ Gemini, обрабатывая как текст, так и изображения."""
     text_parts = []
 
     if hasattr(response, "candidates") and response.candidates:
         for candidate in response.candidates:
             if hasattr(candidate, "content") and candidate.content:
-                if hasattr(candidate.content, "parts") and candidate.content.parts:
+                if (
+                    hasattr(candidate.content, "parts")
+                    and candidate.content.parts
+                ):
                     for part in candidate.content.parts:
                         if hasattr(part, "text") and part.text:
                             text_parts.append(part.text)
@@ -332,7 +348,9 @@ def send_gemini_response_with_images(chat_id, response, reply_to_message_id=None
                                     )
                             except Exception as e:
                                 print(f"Ошибка отправки изображения: {e}")
-                                text_parts.append(f"[Ошибка отправки изображения: {e}]")
+                                text_parts.append(
+                                    f"[Ошибка отправки изображения: {e}]"
+                                )
 
     if not text_parts and hasattr(response, "text") and response.text:
         text_parts.append(response.text)
@@ -370,9 +388,7 @@ def handle_help_command(message):
                 example = " (напр. `/translate привет мир`)"
             elif command_info.command == "/prompt":
                 example = " (напр. `/prompt напиши стих`)"
-            help_text += (
-                f"- *{command_info.command}*: {command_info.description}{example}\n"
-            )
+            help_text += f"- *{command_info.command}*: {command_info.description}{example}\n"
     help_text += "- *Пример:* `/translate Hello world`\n"
 
     bot.send_message(message.chat.id, help_text, parse_mode="Markdown")
@@ -426,7 +442,9 @@ def send_welcome(message):
     bot.send_message(
         message.chat.id,
         greeting_text,
-        reply_markup=get_main_keyboard(send_mode, search_enabled, current_model),
+        reply_markup=get_main_keyboard(
+            send_mode, search_enabled, current_model
+        ),
         parse_mode="Markdown",
     )
 
@@ -466,11 +484,15 @@ def new_chat(message):
         f"Текущая модель: {get_model_alias(current_model)}\n"
         f"Режим отправки: {send_mode}\n"
         f"Поиск Google: {search_status}",
-        reply_markup=get_main_keyboard(send_mode, search_enabled, current_model),
+        reply_markup=get_main_keyboard(
+            send_mode, search_enabled, current_model
+        ),
     )
 
 
-@bot.message_handler(func=lambda message: message.text.startswith("Получить ."))
+@bot.message_handler(
+    func=lambda message: message.text.startswith("Получить .")
+)
 @ensure_user_started
 def get_response_as_md(message):
     """Обрабатывает нажатие кнопки "Получить .md 📄"."""
@@ -483,7 +505,9 @@ def get_response_as_md(message):
         words = raw_response.split()
         filename_base = "_".join(words[:3]) if len(words) > 0 else "response"
         filename_base = (
-            filename_base.replace("/", "_").replace("\\", "_").replace(":", "_")
+            filename_base.replace("/", "_")
+            .replace("\\", "_")
+            .replace(":", "_")
         )
 
         md_filename = f"{filename_base}.md"
@@ -510,7 +534,9 @@ def get_response_as_md(message):
         bot.send_message(
             chat_id,
             "У меня нет сохраненных ответов для отправки в виде файла.",
-            reply_markup=get_main_keyboard(send_mode, search_enabled, current_model),
+            reply_markup=get_main_keyboard(
+                send_mode, search_enabled, current_model
+            ),
         )
 
 
@@ -554,7 +580,9 @@ def handle_send_mode(message):
     bot.send_message(
         chat_id,
         mode_message,
-        reply_markup=get_main_keyboard(new_mode, search_enabled, current_model),
+        reply_markup=get_main_keyboard(
+            new_mode, search_enabled, current_model
+        ),
         parse_mode="Markdown",
     )
 
@@ -568,7 +596,9 @@ def handle_search_command(message):
     with SessionLocal() as session:
         user = crud.get_or_create_user(session, user_id)
         new_status = not user.search_enabled
-        updated_user = crud.update_user_search_enabled(session, user_id, new_status)
+        updated_user = crud.update_user_search_enabled(
+            session, user_id, new_status
+        )
 
         search_enabled = updated_user.search_enabled
         send_mode = updated_user.send_mode
@@ -579,7 +609,9 @@ def handle_search_command(message):
         message,
         f"🔎 Поиск Google теперь: *{search_status}*",
         parse_mode="Markdown",
-        reply_markup=get_main_keyboard(send_mode, search_enabled, current_model),
+        reply_markup=get_main_keyboard(
+            send_mode, search_enabled, current_model
+        ),
     )
 
 
@@ -612,7 +644,9 @@ def handle_send_all(message):
             message,
             f"Эта кнопка работает только в режиме '{SEND_MODE_MANUAL}'. "
             f"Ваш текущий режим: '{current_mode}'. Используйте /send_mode.",
-            reply_markup=get_main_keyboard(current_mode, search_enabled, current_model),
+            reply_markup=get_main_keyboard(
+                current_mode, search_enabled, current_model
+            ),
         )
         return
 
@@ -622,7 +656,9 @@ def handle_send_all(message):
         bot.reply_to(
             message,
             "Буфер сообщений пуст. Нечего отправлять.",
-            reply_markup=get_main_keyboard(current_mode, search_enabled, current_model),
+            reply_markup=get_main_keyboard(
+                current_mode, search_enabled, current_model
+            ),
         )
         return
 
@@ -675,7 +711,9 @@ def handle_send_all(message):
         bot.reply_to(
             message,
             "Не удалось сформировать сообщение для отправки из буфера (возможно, он пуст или содержит только пустые элементы).",
-            reply_markup=get_main_keyboard(current_mode, search_enabled, current_model),
+            reply_markup=get_main_keyboard(
+                current_mode, search_enabled, current_model
+            ),
         )
         clear_user_context_db(user_id)
         return
@@ -687,7 +725,9 @@ def handle_send_all(message):
 
     try:
         if is_image_generation_model(current_model):
-            gemini_config = GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
+            gemini_config = GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"]
+            )
         else:
             tools = [Tool(url_context=genai_types.UrlContext())]
             if search_enabled:
@@ -717,10 +757,18 @@ def handle_send_all(message):
                 for i, chunk in enumerate(
                     response.candidates[0].grounding_metadata.grounding_chunks
                 ):
-                    if hasattr(chunk, "web") and chunk.web.uri and chunk.web.title:
-                        sources.append(f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})")
+                    if (
+                        hasattr(chunk, "web")
+                        and chunk.web.uri
+                        and chunk.web.title
+                    ):
+                        sources.append(
+                            f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})"
+                        )
                     elif hasattr(chunk, "web") and chunk.web.uri:
-                        sources.append(f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})")
+                        sources.append(
+                            f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})"
+                        )
 
                 if sources:
                     sources_text = "\n\nИсточники:\n" + "\n".join(sources)
@@ -767,7 +815,9 @@ def handle_send_all(message):
             message,
             f"Произошла ошибка при отправке: {e!s}\n\n"
             "Ваши сообщения и фото сохранены в буфере. Попробуйте позже или измените содержимое буфера.",
-            reply_markup=get_main_keyboard(current_mode, search_enabled, current_model),
+            reply_markup=get_main_keyboard(
+                current_mode, search_enabled, current_model
+            ),
         )
 
 
@@ -792,7 +842,9 @@ def handle_get_file(call):
             if len(words) > 0
             else f"response.{file_format}"
         )
-        filename = filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+        filename = (
+            filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+        )
 
         if file_format == "txt":
             file_content = markdown_to_text(raw_response)
@@ -885,7 +937,9 @@ def handle_model_selection(call):
     bot.send_message(
         call.message.chat.id,
         "Можете начать новый диалог.",
-        reply_markup=get_main_keyboard(send_mode, search_enabled, current_model),
+        reply_markup=get_main_keyboard(
+            send_mode, search_enabled, current_model
+        ),
     )
 
 
@@ -940,7 +994,9 @@ def handle_document(message):
 
             if current_mode == SEND_MODE_MANUAL:
                 # Add to buffer as well
-                add_to_message_buffer(user_id, {**file_data, "type": "document"})
+                add_to_message_buffer(
+                    user_id, {**file_data, "type": "document"}
+                )
 
                 with SessionLocal() as session:
                     buffer_count = len(crud.get_buffer(session, user_id))
@@ -988,7 +1044,9 @@ def handle_document(message):
         bot.reply_to(
             message,
             f"Извините, я не могу обработать этот тип файла ({doc_mime_type}). \nПоддерживаемые типы: {supported_types_str}",
-            reply_markup=get_main_keyboard(current_mode, search_enabled, current_model),
+            reply_markup=get_main_keyboard(
+                current_mode, search_enabled, current_model
+            ),
         )
 
 
@@ -1052,7 +1110,9 @@ def handle_photo(message):
         api_message_parts.append(img)
 
         if is_image_generation_model(current_model):
-            gemini_config = GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
+            gemini_config = GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"]
+            )
             response = chat_session.send_message(
                 message=api_message_parts, config=gemini_config
             )
@@ -1091,7 +1151,9 @@ def handle_photo(message):
             message,
             f"Произошла ошибка при обработке изображения ({current_model}): {e!s}\n\n"
             "Возможно, стоит попробовать новый чат.",
-            reply_markup=get_main_keyboard(current_mode, search_enabled, current_model),
+            reply_markup=get_main_keyboard(
+                current_mode, search_enabled, current_model
+            ),
         )
 
 
@@ -1108,7 +1170,9 @@ def handle_quick_tool_command(message):
     chat_id = message.chat.id
     command_with_slash = message.text.split(" ", 1)[0]
     command = command_with_slash[1:]
-    user_query = message.text.split(" ", 1)[1].strip() if " " in message.text else ""
+    user_query = (
+        message.text.split(" ", 1)[1].strip() if " " in message.text else ""
+    )
 
     if not user_query:
         bot.reply_to(
@@ -1125,7 +1189,9 @@ def handle_quick_tool_command(message):
     thinking_budget = tool_config.get("thinking_budget", None)
 
     bot.send_chat_action(chat_id, "typing")
-    status_msg = bot.reply_to(message, f"Выполняю команду `{command_with_slash}`...")
+    status_msg = bot.reply_to(
+        message, f"Выполняю команду `{command_with_slash}`..."
+    )
 
     if len(user_query) > 4000:
         bot.reply_to(
@@ -1136,7 +1202,10 @@ def handle_quick_tool_command(message):
 
     try:
         config_kwargs = {"system_instruction": system_instruction}
-        if model_to_use == "gemini-3-flash-preview" and thinking_budget is not None:
+        if (
+            model_to_use == "gemini-3-flash-preview"
+            and thinking_budget is not None
+        ):
             config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
                 thinking_budget=thinking_budget
             )
@@ -1161,7 +1230,9 @@ def handle_quick_tool_command(message):
             words = user_query.split()
             filename_base = "_".join(words[:3]) if len(words) > 0 else command
             filename = f"{filename_base}_{command}.md"
-            filename = filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+            filename = (
+                filename.replace("/", "_").replace("\\", "_").replace(":", "_")
+            )
             send_text_as_file(chat_id, raw_response_text, filename)
 
         try:
@@ -1205,7 +1276,9 @@ def handle_message(message):
 
     if current_mode == SEND_MODE_MANUAL:
         # Add to buffer in DB
-        add_to_message_buffer(user_id, {"type": "text", "content": message.text})
+        add_to_message_buffer(
+            user_id, {"type": "text", "content": message.text}
+        )
 
         with SessionLocal() as session:
             buffer_count = len(crud.get_buffer(session, user_id))
@@ -1239,7 +1312,9 @@ def handle_message(message):
                         )
                     )
 
-                    api_message_parts.append(f"(Файл: {file_info['filename']})")
+                    api_message_parts.append(
+                        f"(Файл: {file_info['filename']})"
+                    )
                 except Exception as file_err:
                     bot.send_message(
                         chat_id,
@@ -1252,7 +1327,9 @@ def handle_message(message):
         chat_session = get_active_chat(user_id, current_model)
 
         if is_image_generation_model(current_model):
-            gemini_config = GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
+            gemini_config = GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"]
+            )
         else:
             tools = [Tool(url_context=genai_types.UrlContext())]
             if search_enabled:
@@ -1288,10 +1365,18 @@ def handle_message(message):
                 for i, chunk in enumerate(
                     response.candidates[0].grounding_metadata.grounding_chunks
                 ):
-                    if hasattr(chunk, "web") and chunk.web.uri and chunk.web.title:
-                        sources.append(f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})")
+                    if (
+                        hasattr(chunk, "web")
+                        and chunk.web.uri
+                        and chunk.web.title
+                    ):
+                        sources.append(
+                            f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})"
+                        )
                     elif hasattr(chunk, "web") and chunk.web.uri:
-                        sources.append(f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})")
+                        sources.append(
+                            f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})"
+                        )
 
                 if sources:
                     sources_text = "\n\nИсточники:\n" + "\n".join(sources)
@@ -1302,7 +1387,9 @@ def handle_message(message):
         user_last_responses[user_id] = raw_response_text
 
         if not is_image_generation_model(current_model):
-            plain_response_text = markdown_to_text(response.text) + sources_text
+            plain_response_text = (
+                markdown_to_text(response.text) + sources_text
+            )
             message_parts = split_long_message(plain_response_text)
 
             for i, part in enumerate(message_parts):
@@ -1322,7 +1409,9 @@ def handle_message(message):
             message,
             f"Произошла ошибка: {e!s}\n\nВозможно стоит "
             f"попробовать другую модель или начать новый чат.",
-            reply_markup=get_main_keyboard(current_mode, search_enabled, current_model),
+            reply_markup=get_main_keyboard(
+                current_mode, search_enabled, current_model
+            ),
         )
 
 
