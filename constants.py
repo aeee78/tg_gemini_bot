@@ -15,10 +15,10 @@ MAX_MESSAGE_LENGTH = 4000
 
 MAX_FILE_SIZE_MB = 20
 
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gemini-3.5-flash"
 
 AVAILABLE_MODELS = [
-    "gemini-3-flash-preview",
+    "gemini-3.5-flash",
     "gemini-3.1-pro-preview",
     "gemini-3.1-flash-lite-preview",
     "gemini-3.1-flash-image-preview",
@@ -26,7 +26,7 @@ AVAILABLE_MODELS = [
 
 
 MODEL_ALIASES = {
-    "gemini-3-flash-preview": "3 Flash 🚀",
+    "gemini-3.5-flash": "3.5 Flash 🚀",
     "gemini-3.1-pro-preview": "3.1 Pro💡",
     "gemini-3.1-flash-lite-preview": "3.1 Flash Lite🐣",
     "gemini-3.1-flash-image-preview": "3.1 Flash IMG🎨 (генерация и редактирование изображений)",

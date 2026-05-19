@@ -23,7 +23,7 @@
 -   **Автоматическое определение:** Выберите модель `2.5 Flash IMG🎨` и бот автоматически будет генерировать изображения
 
 ### 🧠 **Поддержка моделей Gemini**
--   **`3 Flash 🚀`** (`gemini-3-flash-preview`) - Новейшая быстрая модель для повседневных задач
+-   **`3.5 Flash 🚀`** (`gemini-3.5-flash`) - Новейшая быстрая модель для повседневных задач
 -   **`3 Pro💡`** (`gemini-3-pro-preview`) - Новейшая продвинутая модель для сложных рассуждений и задач (доступ через `/unlock_pro`)
 -   **`3.1 Flash Lite🐣`** (`gemini-3.1-flash-lite-preview`) - Экономичная и легкая версия
 -   **`3.1 Flash IMG🎨`** (`gemini-3.1-flash-image-preview`) - **Модель с генерацией и редактированием изображений** (доступ через `/unlock_pro`)
@@ -204,7 +204,7 @@ This project implements a Telegram bot that uses the Google Gemini API to intera
 -   **Automatic detection:** Select `2.5 Flash IMG🎨` model and the bot will automatically generate images
 
 ### 🧠 **Gemini Models Support**
--   **`3 Flash 🚀`** (`gemini-3-flash-preview`) - Newest fast model for everyday tasks
+-   **`3.5 Flash 🚀`** (`gemini-3.5-flash`) - Newest fast model for everyday tasks
 -   **`3 Pro💡`** (`gemini-3-pro-preview`) - Newest advanced model for complex reasoning and tasks (access via `/unlock_pro`)
 -   **`3.1 Flash Lite🐣`** (`gemini-3.1-flash-lite-preview`) - Lightweight economical version
 -   **`3.1 Flash IMG🎨`** (`gemini-3.1-flash-image-preview`) - **Image generation and editing model** (access via `/unlock_pro`)
