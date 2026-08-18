@@ -35,7 +35,11 @@ from keyboards import (
 )
 from functools import wraps
 
-from utils import markdown_to_text, split_long_message, BytesEncoder
+from utils import (
+    BytesEncoder,
+    markdown_to_text,
+    send_rich_response,
+)
 
 from database import db, crud
 from database.db import SessionLocal
@@ -362,16 +366,12 @@ def send_gemini_response_with_images(
 
     if text_parts:
         combined_text = "\n".join(text_parts)
-        plain_text = markdown_to_text(combined_text)
-        message_parts = split_long_message(plain_text)
-
-        for i, part in enumerate(message_parts):
-            bot.send_message(
-                chat_id,
-                part,
-                reply_to_message_id=reply_to_message_id if i == 0 else None,
-            )
-
+        send_rich_response(
+            bot,
+            chat_id,
+            combined_text,
+            reply_to_message_id=reply_to_message_id,
+        )
         return combined_text
 
     return ""
@@ -793,23 +793,13 @@ def handle_send_all(message):
             pass
 
         if not is_image_generation_model(current_model):
-            plain_response_text = markdown_to_text(raw_response_text)
-            message_parts = split_long_message(plain_response_text)
-
-            for i, part in enumerate(message_parts):
-                if i == 0:
-                    bot.send_message(
-                        chat_id, part, reply_to_message_id=message.message_id
-                    )
-                else:
-                    bot.send_message(chat_id, part)
-
-            if len(message_parts) > 1:
-                bot.send_message(
-                    chat_id,
-                    "Ответ был разбит на несколько сообщений.",
-                    reply_markup=get_file_download_keyboard(user_id),
-                )
+            send_rich_response(
+                bot,
+                chat_id,
+                raw_response_text,
+                reply_to_message_id=message.message_id,
+                fallback_download_keyboard=get_file_download_keyboard(user_id),
+            )
 
     except Exception as e:
         try:
@@ -1134,21 +1124,13 @@ def handle_photo(message):
         user_last_responses[user_id] = raw_response_text
 
         if not is_image_generation_model(current_model):
-            plain_response_text = markdown_to_text(raw_response_text)
-            message_parts = split_long_message(plain_response_text)
-
-            for i, part in enumerate(message_parts):
-                if i == 0:
-                    bot.reply_to(message, part)
-                else:
-                    bot.send_message(chat_id, part)
-
-            if len(message_parts) > 1:
-                bot.send_message(
-                    chat_id,
-                    "Ответ был разбит на несколько сообщений.",
-                    reply_markup=get_file_download_keyboard(user_id),
-                )
+            send_rich_response(
+                bot,
+                chat_id,
+                raw_response_text,
+                reply_to_message_id=message.message_id,
+                fallback_download_keyboard=get_file_download_keyboard(user_id),
+            )
 
     except Exception as e:
         bot.reply_to(
@@ -1242,14 +1224,12 @@ def handle_quick_tool_command(message):
             pass
 
         if not is_image_generation_model(model_to_use):
-            plain_response_text = markdown_to_text(raw_response_text)
-            message_parts = split_long_message(plain_response_text)
-
-            for i, part in enumerate(message_parts):
-                if i == 0:
-                    bot.reply_to(message, part)
-                else:
-                    bot.send_message(chat_id, part)
+            send_rich_response(
+                bot,
+                chat_id,
+                raw_response_text,
+                reply_to_message_id=message.message_id,
+            )
 
     except Exception as e:
         try:
@@ -1388,23 +1368,13 @@ def handle_message(message):
         user_last_responses[user_id] = raw_response_text
 
         if not is_image_generation_model(current_model):
-            plain_response_text = (
-                markdown_to_text(response.text) + sources_text
+            send_rich_response(
+                bot,
+                message.chat.id,
+                raw_response_text,
+                reply_to_message_id=message.message_id,
+                fallback_download_keyboard=get_file_download_keyboard(user_id),
             )
-            message_parts = split_long_message(plain_response_text)
-
-            for i, part in enumerate(message_parts):
-                if i == 0:
-                    bot.reply_to(message, part)
-                else:
-                    bot.send_message(message.chat.id, part)
-
-            if len(message_parts) > 1:
-                bot.send_message(
-                    message.chat.id,
-                    "Ответ был разбит на несколько сообщений.",
-                    reply_markup=get_file_download_keyboard(user_id),
-                )
     except Exception as e:
         bot.reply_to(
             message,
