@@ -107,7 +107,7 @@ jobs:
             cd $PROJECT_DIR
 
             echo "--- Setting up Python virtual environment with uv ---"
-            uv venv --python $PYTHON_VERSION .venv
+            uv venv --allow-existing --python $PYTHON_VERSION .venv
 
             echo "--- Activating virtual environment ---"
             source .venv/bin/activate
