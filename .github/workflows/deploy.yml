@@ -13,10 +13,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup SSH agent
-        uses: webfactory/ssh-agent@v0.8.0
+        uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
@@ -71,7 +71,10 @@ jobs:
                 echo "Warning: uv installation might have failed or $UV_BIN_DIR was not created."
               fi
             else
-              echo "uv is already installed or in PATH."
+              echo "uv is already installed or in PATH. Updating uv..."
+              if command -v uv &> /dev/null; then
+                uv self update || true
+              fi
 
               if [ -f "$UV_ENV_FILE" ] && [[ ":$PATH:" != *":$UV_BIN_DIR:"* ]]; then
                 echo "Sourcing $UV_ENV_FILE to ensure uv from $UV_BIN_DIR is in PATH."
@@ -110,7 +113,7 @@ jobs:
             source .venv/bin/activate
 
             echo "--- Compiling requirements.in to get latest package versions ---"
-            uv pip compile requirements.in -o requirements.txt
+            uv pip compile --upgrade requirements.in -o requirements.txt
 
             echo "--- Syncing Python dependencies from newly generated requirements.txt ---"
             uv pip sync requirements.txt

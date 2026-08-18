@@ -15,21 +15,21 @@ MAX_MESSAGE_LENGTH = 4000
 
 MAX_FILE_SIZE_MB = 20
 
-DEFAULT_MODEL = "gemini-3.5-flash"
+DEFAULT_MODEL = "gemini-3.7-flash"
 
 AVAILABLE_MODELS = [
-    "gemini-3.5-flash",
+    "gemini-3.7-flash",
     "gemini-3.1-pro-preview",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-3.1-flash-image-preview",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-image",
 ]
 
 
 MODEL_ALIASES = {
-    "gemini-3.5-flash": "3.5 Flash 🚀",
+    "gemini-3.7-flash": "3.7 Flash 🚀",
     "gemini-3.1-pro-preview": "3.1 Pro💡",
-    "gemini-3.1-flash-lite-preview": "3.1 Flash Lite🐣",
-    "gemini-3.1-flash-image-preview": "3.1 Flash IMG🎨 (генерация и редактирование изображений)",
+    "gemini-3.5-flash-lite": "3.5 Flash Lite🐣",
+    "gemini-3.1-flash-image": "3.1 Flash IMG🎨 (генерация и редактирование изображений)",
 }
 
 
@@ -40,7 +40,11 @@ def get_model_alias(full_name, default="Неизвестно"):
 
 def is_image_generation_model(model_name):
     """Проверяет, поддерживает ли модель генерацию изображений."""
-    return model_name == "gemini-3.1-flash-image-preview"
+    return model_name in [
+        "gemini-3.1-flash-image",
+        "gemini-3.1-flash-image-preview",
+        "gemini-3-pro-image",
+    ] or "-image" in model_name
 
 
 COMMAND_LIST = [
@@ -96,7 +100,7 @@ HELP_TEXT_TEMPLATE = (
     "• *Новый чат:* Нажмите кнопку, чтобы стереть память и начать с чистого листа (смена модели тоже начинает новый чат).\n"
     "• *Поиск Google:* Включает доступ к интернету для актуальных ответов.\n\n"
     "🎨 *Генерация изображений:*\n"
-    "Переключитесь на модель *2.5 Flash IMG🎨*.\n"
+    "Переключитесь на модель *3.1 Flash IMG🎨*.\n"
     "• *Текст → Картинка:* «Нарисуй киберпанк-город».\n"
     "• *Фото → Изменение:* Пришлите фото с подписью «Сделай черно-белым» или «Добавь очки».\n\n"
     "📄 *Работа с файлами:*\n"

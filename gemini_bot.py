@@ -117,7 +117,12 @@ def save_active_chat(user_id):
         chat = user_chats[user_id]
         try:
             history_data = []
-            for content in chat._curated_history:
+            history_list = (
+                chat.get_history()
+                if hasattr(chat, "get_history")
+                else getattr(chat, "_curated_history", [])
+            )
+            for content in history_list:
                 if hasattr(content, "model_dump"):
                     history_data.append(content.model_dump())
                 else:
@@ -874,7 +879,6 @@ def handle_model_selection(call):
     selected_model = call.data.replace("model_", "")
 
     PRO_MODEL_NAME = "gemini-3.1-pro-preview"
-    IMAGE_MODEL_NAME = "gemini-3.1-flash-image-preview"
 
     with SessionLocal() as session:
         user = crud.get_or_create_user(session, user_id)
@@ -893,7 +897,7 @@ def handle_model_selection(call):
             )
             return
 
-        if selected_model == IMAGE_MODEL_NAME and not is_whitelisted(user_id):
+        if is_image_generation_model(selected_model) and not is_whitelisted(user_id):
             bot.answer_callback_query(
                 call.id,
                 text="Доступ к модели генерации изображений ограничен. Используйте /unlock_pro <Имя создателя бота>",
@@ -1202,10 +1206,7 @@ def handle_quick_tool_command(message):
 
     try:
         config_kwargs = {"system_instruction": system_instruction}
-        if (
-            model_to_use == "gemini-3.5-flash"
-            and thinking_budget is not None
-        ):
+        if thinking_budget is not None:
             config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
                 thinking_budget=thinking_budget
             )

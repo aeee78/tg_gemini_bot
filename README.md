@@ -20,13 +20,13 @@
 -   **Text → Image:** Просто напишите "Нарисуй кота в космосе" и получите изображение
 -   **Image + Text → Image:** Загрузите фото и попросите "Измени стиль на винтаж" 
 -   **Многоэтапное редактирование:** Пошаговое изменение изображений в диалоге
--   **Автоматическое определение:** Выберите модель `2.5 Flash IMG🎨` и бот автоматически будет генерировать изображения
+-   **Автоматическое определение:** Выберите модель `3.1 Flash IMG🎨` и бот автоматически будет генерировать изображения
 
 ### 🧠 **Поддержка моделей Gemini**
--   **`3.5 Flash 🚀`** (`gemini-3.5-flash`) - Новейшая быстрая модель для повседневных задач
--   **`3 Pro💡`** (`gemini-3-pro-preview`) - Новейшая продвинутая модель для сложных рассуждений и задач (доступ через `/unlock_pro`)
--   **`3.1 Flash Lite🐣`** (`gemini-3.1-flash-lite-preview`) - Экономичная и легкая версия
--   **`3.1 Flash IMG🎨`** (`gemini-3.1-flash-image-preview`) - **Модель с генерацией и редактированием изображений** (доступ через `/unlock_pro`)
+-   **`3.7 Flash 🚀`** (`gemini-3.7-flash`) - Новейшая быстрая модель для повседневных задач
+-   **`3.1 Pro💡`** (`gemini-3.1-pro-preview`) - Продвинутая модель для сложных рассуждений и задач (доступ через `/unlock_pro`)
+-   **`3.5 Flash Lite🐣`** (`gemini-3.5-flash-lite`) - Экономичная и сверхбыстрая версия
+-   **`3.1 Flash IMG🎨`** (`gemini-3.1-flash-image`) - **Модель с генерацией и редактированием изображений** (доступ через `/unlock_pro`)
 
 ### 📁 **Работа с файлами**
 -   **Поддержка форматов:** PDF, DOCX, TXT, CSV, JSON, XML, HTML, CSS, JS, PY и другие
@@ -84,7 +84,7 @@
 2. Выберите нужную модель через кнопку `Модель: ...`
 
 ### 🎨 **Генерация изображений**
-1. **Выберите модель генерации:** Нажмите `Модель: ...` → `2.5 Flash IMG🎨`
+1. **Выберите модель генерации:** Нажмите `Модель: ...` → `3.1 Flash IMG🎨`
 2. **Создавайте изображения:**
    - **Текст → Изображение:** "Нарисуй кота в космическом шлеме"
    - **Изображение + Текст → Новое изображение:** Загрузите фото → "Измени стиль на аниме"
@@ -102,7 +102,7 @@
 - **Новый чат:** Очистка истории и контекста диалога
 
 ### 📥 **Скачивание ответов**
-- **Markdown:** Кнопка "Получить .MD �"
+- **Markdown:** Кнопка "Получить .MD 📄"
 - **Текст:** Инлайн-кнопка "Скачать в формате .txt" (для длинных ответов)
 
 ## Команды
@@ -133,12 +133,12 @@
 ## 🎨 Примеры использования генерации изображений
 
 ### Простая генерация (Text → Image)
-1. Выберите модель `2.0 Flash+IMG🎨`
+1. Выберите модель `3.1 Flash IMG🎨`
 2. Напишите: "Нарисуй футуристический город на закате"
 3. Получите сгенерированное изображение
 
 ### Редактирование изображений (Image → Image)
-1. Выберите модель `2.0 Flash+IMG🎨`
+1. Выберите модель `3.1 Flash IMG🎨`
 2. Загрузите фото своей комнаты
 3. Напишите: "Измени интерьер в стиле минимализм"
 4. Получите обновленное изображение
@@ -153,7 +153,7 @@
 - "Нарисуй инфографику о пользе спорта"
 - "Создай комикс про кота-программиста"
 
-> **💡 Подсказка:** Модель `2.0 Flash+IMG🎨` автоматически определяет, когда нужно генерировать изображения. Google Search и URL Context для неё отключены, так как они не поддерживаются.
+> **💡 Подсказка:** Модель `3.1 Flash IMG🎨` автоматически определяет, когда нужно генерировать изображения. Google Search и URL Context для неё отключены, так как они не поддерживаются.
 
 ## Развертывание (Deployment)
 
@@ -201,13 +201,13 @@ This project implements a Telegram bot that uses the Google Gemini API to intera
 -   **Text → Image:** Simply write "Draw a cat in space" and get an image
 -   **Image + Text → Image:** Upload a photo and ask "Change style to vintage" 
 -   **Multi-step editing:** Step-by-step image modifications in dialogue
--   **Automatic detection:** Select `2.5 Flash IMG🎨` model and the bot will automatically generate images
+-   **Automatic detection:** Select `3.1 Flash IMG🎨` model and the bot will automatically generate images
 
 ### 🧠 **Gemini Models Support**
--   **`3.5 Flash 🚀`** (`gemini-3.5-flash`) - Newest fast model for everyday tasks
--   **`3 Pro💡`** (`gemini-3-pro-preview`) - Newest advanced model for complex reasoning and tasks (access via `/unlock_pro`)
--   **`3.1 Flash Lite🐣`** (`gemini-3.1-flash-lite-preview`) - Lightweight economical version
--   **`3.1 Flash IMG🎨`** (`gemini-3.1-flash-image-preview`) - **Image generation and editing model** (access via `/unlock_pro`)
+-   **`3.7 Flash 🚀`** (`gemini-3.7-flash`) - Newest fast model for everyday tasks
+-   **`3.1 Pro💡`** (`gemini-3.1-pro-preview`) - Advanced model for complex reasoning and tasks (access via `/unlock_pro`)
+-   **`3.5 Flash Lite🐣`** (`gemini-3.5-flash-lite`) - Economical and ultra-fast version
+-   **`3.1 Flash IMG🎨`** (`gemini-3.1-flash-image`) - **Image generation and editing model** (access via `/unlock_pro`)
 
 ### 📁 **File Processing**
 -   **Supported formats:** PDF, DOCX, TXT, CSV, JSON, XML, HTML, CSS, JS, PY and others
@@ -265,7 +265,7 @@ This project implements a Telegram bot that uses the Google Gemini API to intera
 2. Select the needed model via `Model: ...` button
 
 ### 🎨 **Image Generation**
-1. **Select generation model:** Press `Model: ...` → `2.5 Flash IMG🎨`
+1. **Select generation model:** Press `Model: ...` → `3.1 Flash IMG🎨`
 2. **Create images:**
    - **Text → Image:** "Draw a cat in a space helmet"
    - **Image + Text → New Image:** Upload photo → "Change style to anime"
@@ -283,7 +283,7 @@ This project implements a Telegram bot that uses the Google Gemini API to intera
 - **New chat:** Clear history and dialogue context
 
 ### 📥 **Download Responses**
-- **Markdown:** "Get .MD �" button
+- **Markdown:** "Get .MD 📄" button
 - **Text:** Inline button "Download as .txt" (for long responses)
 
 ## Commands
@@ -314,12 +314,12 @@ These commands perform one-off tasks and do not affect your main chat context. T
 ## 🎨 Image Generation Examples
 
 ### Simple Generation (Text → Image)
-1. Select model `2.5 Flash IMG🎨`
+1. Select model `3.1 Flash IMG🎨`
 2. Write: "Draw a futuristic city at sunset"
 3. Receive generated image
 
 ### Image Editing (Image → Image)
-1. Select model `2.5 Flash IMG🎨`
+1. Select model `3.1 Flash IMG🎨`
 2. Upload photo of your room
 3. Write: "Change interior to minimalist style"
 4. Receive updated image
@@ -334,7 +334,7 @@ These commands perform one-off tasks and do not affect your main chat context. T
 - "Draw an infographic about benefits of sports"
 - "Create a comic about a programmer cat"
 
-> **💡 Tip:** Model `2.5 Flash IMG🎨` automatically determines when to generate images. Google Search and URL Context are disabled for it as they are not supported.
+> **💡 Tip:** Model `3.1 Flash IMG🎨` automatically determines when to generate images. Google Search and URL Context are disabled for it as they are not supported.
 
 ## Deployment
 
