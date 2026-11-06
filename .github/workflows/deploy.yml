@@ -118,6 +118,9 @@ jobs:
             echo "--- Syncing Python dependencies from newly generated requirements.txt ---"
             uv pip sync requirements.txt
 
+            echo "--- Migrating database and importing legacy whitelist ---"
+            .venv/bin/python -c 'from database.db import init_db; init_db()'
+
             echo "--- Managing systemd service ---"
             echo "IMPORTANT: Assuming $SERVICE_NAME is already present in /etc/systemd/system/"
 
