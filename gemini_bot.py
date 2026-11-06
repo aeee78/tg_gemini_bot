@@ -281,6 +281,7 @@ def ensure_user_started(func):
                         f"Ошибка при отправке сообщения 'введите /start': {e}"
                     )
                 return None
+            user = crud.record_user_activity(session, message.from_user)
             ensure_user_model(session, user)
         return func(message, *args, **kwargs)
 
@@ -367,6 +368,8 @@ def send_gemini_response_with_images(
 @bot.message_handler(commands=["help"])
 def handle_help_command(message):
     """Выводит подробную справку по функциям бота."""
+    with SessionLocal() as session:
+        crud.record_user_activity(session, message.from_user)
     help_text = HELP_TEXT_TEMPLATE.format(
         MAX_FILE_SIZE_MB=MAX_FILE_SIZE_MB,
         SEND_MODE_IMMEDIATE=SEND_MODE_IMMEDIATE,
@@ -412,7 +415,7 @@ def send_welcome(message):
     with SessionLocal() as session:
         # Create user with defaults and normalize saved model settings.
         user = ensure_user_model(
-            session, crud.get_or_create_user(session, user_id)
+            session, crud.record_user_activity(session, message.from_user)
         )
         current_model = user.current_model
         send_mode = user.send_mode

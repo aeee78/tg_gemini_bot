@@ -39,6 +39,10 @@ class TestWhitelistMigration(unittest.TestCase):
         with self.sessions() as session:
             user = crud.get_user(session, 123)
             self.assertTrue(user.pro_access)
+            self.assertIsNone(user.first_name)
+            self.assertIsNone(user.username)
+            self.assertIsNone(user.registered_at)
+            self.assertIsNone(user.last_active_at)
             self.assertEqual(user.current_model, FLASH_MODEL)
             self.assertEqual(user.send_mode, 'manual')
             self.assertFalse(user.search_enabled)

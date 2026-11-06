@@ -31,6 +31,7 @@ def init_db(whitelist_path="whitelist.txt"):
     from database.models import User
 
     Base.metadata.create_all(bind=engine)
+    migrate_user_profile()
     imported = migrate_whitelist(whitelist_path, User.__table__)
     if imported is not None:
         print(
@@ -85,3 +86,21 @@ def migrate_whitelist(whitelist_path, users_table):
             {"name": migration_name},
         )
     return len(user_ids)
+
+
+def migrate_user_profile():
+    """Add nullable profile fields without inventing historical data."""
+    fields = {
+        "first_name": "VARCHAR",
+        "last_name": "VARCHAR",
+        "username": "VARCHAR",
+        "language_code": "VARCHAR",
+        "registered_at": "DATETIME",
+        "last_active_at": "DATETIME",
+    }
+    with engine.begin() as connection:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        columns = {column["name"] for column in inspect(connection).get_columns("users")}
+        for name, sql_type in fields.items():
+            if name not in columns:
+                connection.exec_driver_sql(f"ALTER TABLE users ADD COLUMN {name} {sql_type}")

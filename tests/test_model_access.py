@@ -1,7 +1,7 @@
 import importlib
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -119,6 +119,28 @@ class TestModelAccess(unittest.TestCase):
         self.assertTrue(self.app.is_whitelisted(123))
         self.set_access(False)
         self.assertFalse(self.app.is_whitelisted(123))
+
+    def test_activity_uses_callback_sender_and_tracks_start_and_help(self):
+        from telebot import types
+
+        profile = SimpleNamespace(id=123, first_name='Sender', username='sender')
+        callback = MagicMock(spec=types.CallbackQuery)
+        callback.from_user = profile
+        callback.message = SimpleNamespace(
+            chat=SimpleNamespace(id=123), from_user=SimpleNamespace(id=999)
+        )  # The message author is the bot, not the person clicking.
+        handler = self.app.ensure_user_started(lambda event: None)
+        handler(callback)
+        with self.sessions() as session:
+            self.assertEqual(crud.get_user(session, 123).username, 'sender')
+            self.assertIsNone(crud.get_user(session, 999))
+        self.message.from_user = profile
+        self.app.handle_help_command(self.message)
+        with patch.object(self.app, 'get_active_chat'):
+            self.app.send_welcome(self.message)
+        with self.sessions() as session:
+            self.assertEqual(crud.get_user(session, 123).first_name, 'Sender')
+            self.assertIsNotNone(crud.get_user(session, 123).last_active_at)
 
     def test_unset_access_code_does_not_unlock(self):
         self.message.text = '/unlock_pro None'

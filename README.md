@@ -356,3 +356,18 @@ The project is configured for automatic deployment to a server (Debian/Ubuntu-ba
     *   **Permissions:** The script assumes it has permissions to install packages and manage `systemd` services on the server.
 
 **Note:** You can also host the project for free on [pythonanywhere.com](https://www.pythonanywhere.com/), but automatic deployment via GitHub Actions is configured for a dedicated server with `systemd`.
+
+
+### Данные профиля пользователей
+
+Таблица `users` хранит `first_name`, `last_name`, `username` (без `@`),
+`language_code`, `registered_at` и `last_active_at`. Профиль обновляется по данным
+Telegram при обработке сообщений и нажатий кнопок; удалённые username и фамилия
+очищаются. `/start` и `/help` также обновляют профиль и активность.
+
+`registered_at` — время первого обращения, создавшего пользователя в базе
+(обычно `/start`), а не дата создания аккаунта Telegram. Для существующих
+пользователей и ID, импортированных из whitelist, историческая дата неизвестна
+и остаётся `NULL`. Новая активность не подменяет эту дату. `last_active_at`
+начинает заполняться при следующем обращении после обновления. Обе даты
+хранятся в UTC. Миграция автоматически добавляет поля в существующую SQLite-базу.

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 from database.models import User, ChatSession, FileContext, MessageBuffer
 
@@ -19,6 +21,21 @@ def get_or_create_user(db: Session, user_id: int):
     user = get_user(db, user_id)
     if not user:
         user = create_user(db, user_id)
+    return user
+
+
+def record_user_activity(db: Session, telegram_user):
+    """Refresh Telegram profile and UTC activity; date only new registrations."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    user = get_user(db, telegram_user.id)
+    if user is None:
+        user = User(id=telegram_user.id, registered_at=now)
+        db.add(user)
+    for field in ("first_name", "last_name", "username", "language_code"):
+        setattr(user, field, getattr(telegram_user, field, None))
+    user.last_active_at = now
+    db.commit()
+    db.refresh(user)
     return user
 
 

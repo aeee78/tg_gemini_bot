@@ -7,6 +7,7 @@ from sqlalchemy import (
     BigInteger,
     ForeignKey,
     LargeBinary,
+    DateTime,
 )
 from sqlalchemy.orm import relationship
 from database.db import Base
@@ -21,6 +22,14 @@ class User(Base):
     send_mode = Column(String, default=SEND_MODE_IMMEDIATE)
     search_enabled = Column(Boolean, default=True)
     pro_access = Column(Boolean, nullable=False, default=False, server_default="0")
+
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    username = Column(String, nullable=True)
+    language_code = Column(String, nullable=True)
+    # UTC timestamps. Legacy/imported users have unknown registration dates.
+    registered_at = Column(DateTime, nullable=True)
+    last_active_at = Column(DateTime, nullable=True)
 
     # Relationships
     chat_session = relationship(
