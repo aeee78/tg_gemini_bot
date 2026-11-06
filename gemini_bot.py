@@ -13,6 +13,9 @@ from PIL import Image
 
 from constants import (
     COMMAND_LIST,
+    AVAILABLE_MODELS,
+    PREMIUM_MODELS,
+    resolve_user_model,
     DEFAULT_MODEL,
     GEMINI_API_KEY,
     PRO_CODE,
@@ -91,6 +94,15 @@ def deserialize_history(history_json):
     except Exception as e:
         print(f"Error deserializing history: {e}")
         return []
+
+
+def ensure_user_model(session, user):
+    """Apply current model availability and access to saved user settings."""
+    model_name = resolve_user_model(user.current_model, is_whitelisted(user.id))
+    if model_name != user.current_model:
+        user = crud.update_user_model(session, user.id, model_name)
+        user_chats.pop(user.id, None)
+    return user
 
 
 def get_active_chat(user_id, model_name):
@@ -295,6 +307,7 @@ def ensure_user_started(func):
                         f"Ошибка при отправке сообщения 'введите /start': {e}"
                     )
                 return None
+            ensure_user_model(session, user)
         return func(message, *args, **kwargs)
 
     return wrapper
@@ -406,9 +419,13 @@ def handle_unlock_pro(message):
     user_id = message.from_user.id
     command_parts = message.text.split(" ", 1)
 
-    if len(command_parts) == 2 and command_parts[1].strip() == str(PRO_CODE):
+    if (
+        PRO_CODE
+        and len(command_parts) == 2
+        and command_parts[1].strip() == PRO_CODE
+    ):
         add_to_whitelist(user_id)
-        bot.reply_to(message, "✅ Доступ к про модели разблокирован!")
+        bot.reply_to(message, "✅ Доступ к 3.8 Flash и генерации изображений разблокирован!")
     else:
         bot.reply_to(message, "❌ Неверный код. Используйте другой")
 
@@ -419,8 +436,10 @@ def send_welcome(message):
     user_id = message.from_user.id
 
     with SessionLocal() as session:
-        # Create user with defaults if not exists
-        user = crud.get_or_create_user(session, user_id)
+        # Create user with defaults and normalize saved model settings.
+        user = ensure_user_model(
+            session, crud.get_or_create_user(session, user_id)
+        )
         current_model = user.current_model
         send_mode = user.send_mode
         search_enabled = user.search_enabled
@@ -868,33 +887,24 @@ def handle_model_selection(call):
     user_id = call.from_user.id
     selected_model = call.data.replace("model_", "")
 
-    PRO_MODEL_NAME = "gemini-3.1-pro-preview"
+    if selected_model not in AVAILABLE_MODELS:
+        bot.answer_callback_query(
+            call.id,
+            text="Эта модель больше недоступна. Выберите модель из меню.",
+        )
+        return
 
     with SessionLocal() as session:
         user = crud.get_or_create_user(session, user_id)
 
-        if selected_model == PRO_MODEL_NAME and not is_whitelisted(user_id):
+        if selected_model in PREMIUM_MODELS and not is_whitelisted(user_id):
             bot.answer_callback_query(
                 call.id,
-                text="Доступ к про модели ограничен. Используйте /unlock_pro <Имя создателя бота>",
+                text="Доступ ограничен. Используйте /unlock_pro <код>",
             )
             bot.send_message(
                 call.message.chat.id,
-                "Доступ к про модели ограничен. Пожалуйста, используйте команду /unlock_pro <Имя создателя бота> для разблокировки.",
-                reply_markup=get_main_keyboard(
-                    user.send_mode, user.search_enabled, user.current_model
-                ),
-            )
-            return
-
-        if is_image_generation_model(selected_model) and not is_whitelisted(user_id):
-            bot.answer_callback_query(
-                call.id,
-                text="Доступ к модели генерации изображений ограничен. Используйте /unlock_pro <Имя создателя бота>",
-            )
-            bot.send_message(
-                call.message.chat.id,
-                "Доступ к модели генерации изображений ограничен. Пожалуйста, используйте команду /unlock_pro <Имя создателя бота> для разблокировки.",
+                "Для доступа к 3.8 Flash и генерации изображений используйте /unlock_pro <код>.",
                 reply_markup=get_main_keyboard(
                     user.send_mode, user.search_enabled, user.current_model
                 ),
@@ -1154,6 +1164,7 @@ def handle_photo(message):
 def handle_quick_tool_command(message):
     """Обрабатывает команды быстрых инструментов (напр., /translate, /prompt)."""
     chat_id = message.chat.id
+    user_id = message.from_user.id
     command_with_slash = message.text.split(" ", 1)[0]
     command = command_with_slash[1:]
     user_query = (
@@ -1172,6 +1183,9 @@ def handle_quick_tool_command(message):
     tool_config = QUICK_TOOLS_CONFIG[command]
     system_instruction = tool_config["system_instruction"]
     model_to_use = tool_config.get("model", DEFAULT_MODEL)
+    if model_to_use in PREMIUM_MODELS and not is_whitelisted(user_id):
+        bot.reply_to(message, "Для этой команды нужен доступ: /unlock_pro <код>.")
+        return
     thinking_budget = tool_config.get("thinking_budget", None)
 
     bot.send_chat_action(chat_id, "typing")

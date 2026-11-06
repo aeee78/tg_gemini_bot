@@ -23,9 +23,8 @@
 -   **Автоматическое определение:** Выберите модель `3.1 Flash IMG🎨` и бот автоматически будет генерировать изображения
 
 ### 🧠 **Поддержка моделей Gemini**
--   **`3.7 Flash 🚀`** (`gemini-3.7-flash`) - Новейшая быстрая модель для повседневных задач
--   **`3.1 Pro💡`** (`gemini-3.1-pro-preview`) - Продвинутая модель для сложных рассуждений и задач (доступ через `/unlock_pro`)
--   **`3.5 Flash Lite🐣`** (`gemini-3.5-flash-lite`) - Экономичная и сверхбыстрая версия
+-   **`3.8 Flash 🚀`** (`gemini-3.8-flash`) - Быстрая модель для сложных задач (доступ через `/unlock_pro`)
+-   **`3.5 Flash Lite🐣`** (`gemini-3.5-flash-lite`) - Экономичная и сверхбыстрая модель по умолчанию
 -   **`3.1 Flash IMG🎨`** (`gemini-3.1-flash-image`) - **Модель с генерацией и редактированием изображений** (доступ через `/unlock_pro`)
 
 ### 📁 **Работа с файлами**
@@ -110,7 +109,7 @@
 ### Основные команды
 - `/start` - 🚀 Перезапустить бота / Начать чат
 - `/help` - ℹ️ Справка по возможностям бота
-- `/unlock_pro <код>` - 🔑 Разблокировать доступ к некоторым моделям
+- `/unlock_pro <код>` - 🔑 Разблокировать 3.8 Flash, генерацию изображений и команды `/promptpro`, `/table`, `/dayplanner`
 
 ### Быстрые инструменты
 
@@ -204,9 +203,8 @@ This project implements a Telegram bot that uses the Google Gemini API to intera
 -   **Automatic detection:** Select `3.1 Flash IMG🎨` model and the bot will automatically generate images
 
 ### 🧠 **Gemini Models Support**
--   **`3.7 Flash 🚀`** (`gemini-3.7-flash`) - Newest fast model for everyday tasks
--   **`3.1 Pro💡`** (`gemini-3.1-pro-preview`) - Advanced model for complex reasoning and tasks (access via `/unlock_pro`)
--   **`3.5 Flash Lite🐣`** (`gemini-3.5-flash-lite`) - Economical and ultra-fast version
+-   **`3.8 Flash 🚀`** (`gemini-3.8-flash`) - Fast model for complex tasks (access via `/unlock_pro`)
+-   **`3.5 Flash Lite🐣`** (`gemini-3.5-flash-lite`) - Economical and ultra-fast default model
 -   **`3.1 Flash IMG🎨`** (`gemini-3.1-flash-image`) - **Image generation and editing model** (access via `/unlock_pro`)
 
 ### 📁 **File Processing**
@@ -291,7 +289,7 @@ This project implements a Telegram bot that uses the Google Gemini API to intera
 ### Main Commands
 - `/start` - 🚀 Restart bot / Start chat
 - `/help` - ℹ️ Help with bot features
-- `/unlock_pro <code>` - 🔑 Unlock access to some models
+- `/unlock_pro <code>` - 🔑 Unlock 3.8 Flash, image generation, and `/promptpro`, `/table`, `/dayplanner`
 
 ### Quick Tools
 

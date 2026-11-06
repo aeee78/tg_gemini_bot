@@ -15,22 +15,26 @@ MAX_MESSAGE_LENGTH = 16000
 
 MAX_FILE_SIZE_MB = 20
 
-DEFAULT_MODEL = "gemini-3.7-flash"
-
-AVAILABLE_MODELS = [
-    "gemini-3.7-flash",
-    "gemini-3.1-pro-preview",
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-image",
-]
-
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
+FLASH_MODEL = "gemini-3.8-flash"
+IMAGE_MODEL = "gemini-3.1-flash-image"
+PREMIUM_MODELS = {FLASH_MODEL, IMAGE_MODEL}
+AVAILABLE_MODELS = [DEFAULT_MODEL, FLASH_MODEL, IMAGE_MODEL]
 
 MODEL_ALIASES = {
-    "gemini-3.7-flash": "3.7 Flash 🚀",
-    "gemini-3.1-pro-preview": "3.1 Pro💡",
-    "gemini-3.5-flash-lite": "3.5 Flash Lite🐣",
-    "gemini-3.1-flash-image": "3.1 Flash IMG🎨 (генерация и редактирование изображений)",
+    DEFAULT_MODEL: "3.5 Flash Lite🐣",
+    FLASH_MODEL: "3.8 Flash 🚀 🔒",
+    IMAGE_MODEL: "3.1 Flash IMG🎨 🔒 (генерация и редактирование изображений)",
 }
+
+
+def resolve_user_model(model_name, has_pro_access):
+    """Fall back to Lite for retired models and models requiring access."""
+    if model_name not in AVAILABLE_MODELS:
+        return DEFAULT_MODEL
+    if model_name in PREMIUM_MODELS and not has_pro_access:
+        return DEFAULT_MODEL
+    return model_name
 
 
 def get_model_alias(full_name, default="Неизвестно"):
