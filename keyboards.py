@@ -14,7 +14,7 @@ def get_main_keyboard(
 ):
     """Создает основную клавиатуру с динамическим текстом кнопок."""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(types.KeyboardButton("Новый чат"))
+    keyboard.add(types.KeyboardButton("Новый чат"), types.KeyboardButton("Контекст 🧠"))
 
     search_status_text = "Вкл ✅" if search_enabled else "Выкл ❌"
 

@@ -145,6 +145,96 @@ class TestModelAccess(unittest.TestCase):
             self.assertEqual(crud.get_user(session, 123).first_name, 'Sender')
             self.assertIsNotNone(crud.get_user(session, 123).last_active_at)
 
+    def test_model_switch_preserves_history_files_buffer_and_download(self):
+        from google.genai import types
+        history = [types.Content(role='user', parts=[types.Part(text='Remember me')]),
+                   types.Content(role='model', parts=[types.Part(text='Answer', thought_signature=b'signature')])]
+        old_chat = MagicMock()
+        old_chat.get_history.return_value = history
+        self.app.user_chats[123] = old_chat
+        self.app.user_last_responses[123] = 'Last answer'
+        self.set_access(True)
+        with self.sessions() as session:
+            crud.add_file_context(session, 123, 'file.txt', 'text/plain', b'file')
+            crud.add_to_buffer(session, 123, 'text', content='pending')
+        call = SimpleNamespace(from_user=self.message.from_user, message=self.message,
+                               id='callback', data='model_' + FLASH_MODEL)
+        with patch.object(self.app.client.chats, 'create') as create:
+            self.app.handle_model_selection.__wrapped__(call)
+            self.assertIs(self.app.user_chats[123], create.return_value)
+            self.assertEqual(create.call_args.kwargs['history'][0].parts[0].text, 'Remember me')
+        with self.sessions() as session:
+            self.assertEqual(crud.get_user(session, 123).current_model, FLASH_MODEL)
+            stored = self.app.deserialize_history(crud.get_chat_session(session, 123).history_json)
+            self.assertEqual(stored[0].parts[0].text, 'Remember me')
+            self.assertIsNone(stored[1].parts[0].thought_signature)
+            self.assertEqual(len(crud.get_file_contexts(session, 123)), 1)
+            self.assertEqual(len(crud.get_buffer(session, 123)), 1)
+        self.assertEqual(self.app.user_last_responses[123], 'Last answer')
+
+    def test_failed_switch_keeps_original_model_and_cache(self):
+        self.set_access(True)
+        old_chat = MagicMock()
+        old_chat.get_history.return_value = []
+        self.app.user_chats[123] = old_chat
+        call = SimpleNamespace(from_user=self.message.from_user, message=self.message,
+                               id='callback', data='model_' + FLASH_MODEL)
+        with patch.object(self.app.client.chats, 'create', side_effect=ValueError('cannot create')):
+            self.app.handle_model_selection.__wrapped__(call)
+        with self.sessions() as session:
+            self.assertEqual(crud.get_user(session, 123).current_model, DEFAULT_MODEL)
+        self.assertIs(self.app.user_chats[123], old_chat)
+
+    def test_context_counts_snapshot_without_generating_or_clearing(self):
+        from google.genai import types
+        chat = MagicMock()
+        chat.get_history.return_value = [types.Content(role='user', parts=[types.Part(text='History')])]
+        self.app.user_chats[123] = chat
+        self.app.client.models.count_tokens.return_value = SimpleNamespace(total_tokens=1234)
+        self.app.client.models.get.return_value = SimpleNamespace(input_token_limit=10000)
+        with self.sessions() as session:
+            crud.add_file_context(session, 123, 'file.txt', 'text/plain', b'file')
+            crud.add_to_buffer(session, 123, 'text', content='pending')
+        self.app.show_context_size.__wrapped__(self.message)
+        text = self.app.bot.reply_to.call_args.args[1]
+        self.assertIn('1 234', text)
+        self.assertIn('12.3%', text)
+        self.assertIn('Ожидающих файлов: 1', text)
+        self.app.client.models.generate_content.assert_not_called()
+        with self.sessions() as session:
+            self.assertEqual(len(crud.get_buffer(session, 123)), 1)
+            self.assertEqual(len(crud.get_file_contexts(session, 123)), 1)
+
+    def test_binary_thought_signature_survives_history_serialization(self):
+        from google.genai import types
+        from chat_context import serialize_history
+        history = [types.Content(role='model', parts=[types.Part(text='Answer', thought_signature=b'\x00\xff')])]
+        self.assertEqual(self.app.deserialize_history(serialize_history(history))[0].parts[0].thought_signature, b'\x00\xff')
+
+    def test_model_callback_during_inflight_request_does_not_change_chat(self):
+        from threading import Event, Thread
+        from telebot import types
+        entered, release = Event(), Event()
+        def ongoing(message):
+            entered.set()
+            release.wait(3)
+        thread = Thread(target=self.app.serialize_user_operation(ongoing), args=(self.message,))
+        thread.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            callback = MagicMock(spec=types.CallbackQuery)
+            callback.from_user = self.message.from_user
+            callback.id = 'callback'
+            action = MagicMock()
+            self.app.serialize_user_operation(action)(callback)
+            action.assert_not_called()
+            self.app.bot.answer_callback_query.assert_called_with(
+                'callback', text='Дождитесь завершения текущего запроса.'
+            )
+        finally:
+            release.set()
+            thread.join(3)
+
     def test_unset_access_code_does_not_unlock(self):
         self.message.text = '/unlock_pro None'
         with patch.object(self.app, 'PRO_CODE', None), patch.object(self.app, 'add_to_whitelist') as add:

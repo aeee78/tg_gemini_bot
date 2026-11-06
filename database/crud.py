@@ -61,6 +61,20 @@ def update_user_model(db: Session, user_id: int, model: str):
     return user
 
 
+def switch_user_model(db: Session, user_id: int, model: str, history_json: str):
+    """Commit model and portable history together, keeping files and buffer."""
+    user = get_user(db, user_id)
+    user.current_model = model
+    chat = get_chat_session(db, user_id)
+    if chat is None:
+        db.add(ChatSession(user_id=user_id, history_json=history_json))
+    else:
+        chat.history_json = history_json
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def update_user_send_mode(db: Session, user_id: int, mode: str):
     user = get_or_create_user(db, user_id)
     user.send_mode = mode

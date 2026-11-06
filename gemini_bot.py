@@ -37,6 +37,7 @@ from keyboards import (
     get_model_selection_keyboard,
 )
 from functools import wraps
+from threading import Lock, RLock
 
 from utils import (
     BytesEncoder,
@@ -48,6 +49,7 @@ from database import db, crud
 from database.db import SessionLocal
 from admin import register_admin_handlers
 from usage import track_gemini_call
+from chat_context import serialize_history, portable_history, context_contents
 
 load_dotenv()
 
@@ -62,6 +64,33 @@ register_admin_handlers(bot, SessionLocal)
 # Global stores
 user_chats = {}  # Cache for active chat sessions
 user_last_responses = {}
+_user_operation_locks = {}
+_user_operation_registry_lock = Lock()
+
+
+def serialize_user_operation(func):
+    """Finish a user's current request before switching or resetting its chat."""
+    @wraps(func)
+    def serialized(message, *args, **kwargs):
+        actor = getattr(message, "from_user", None)
+        if actor is None:
+            return func(message, *args, **kwargs)
+        with _user_operation_registry_lock:
+            lock = _user_operation_locks.setdefault(actor.id, RLock())
+        if isinstance(message, telebot.types.CallbackQuery):
+            if not lock.acquire(blocking=False):
+                bot.answer_callback_query(
+                    message.id, text="Дождитесь завершения текущего запроса."
+                )
+                return None
+            try:
+                return func(message, *args, **kwargs)
+            finally:
+                lock.release()
+        with lock:
+            return func(message, *args, **kwargs)
+    return serialized
+
 
 # --- Helper Functions for Persistence ---
 
@@ -88,6 +117,9 @@ def deserialize_history(history_json):
                         except Exception:
                             # Already bytes or invalid base64, leaving as is
                             pass
+                signature = part_data.get("thought_signature")
+                if isinstance(signature, str):
+                    part_data["thought_signature"] = base64.b64decode(signature)
                 parts.append(genai_types.Part(**part_data))
             history.append(
                 genai_types.Content(role=item.get("role"), parts=parts)
@@ -102,7 +134,15 @@ def ensure_user_model(session, user):
     """Apply current model availability and access to saved user settings."""
     model_name = resolve_user_model(user.current_model, user.pro_access)
     if model_name != user.current_model:
-        user = crud.update_user_model(session, user.id, model_name)
+        cached = user_chats.get(user.id)
+        if cached is not None and hasattr(cached, "get_history"):
+            history = cached.get_history(curated=True)
+        else:
+            saved = crud.get_chat_session(session, user.id)
+            history = deserialize_history(saved.history_json) if saved else []
+        user = crud.switch_user_model(
+            session, user.id, model_name, serialize_history(portable_history(history))
+        )
         user_chats.pop(user.id, None)
     return user
 
@@ -118,15 +158,10 @@ def get_active_chat(user_id, model_name):
         if chat_session and chat_session.history_json:
             history = deserialize_history(chat_session.history_json)
 
-    try:
-        new_chat = client.chats.create(model=model_name, history=history)
-        user_chats[user_id] = new_chat
-        return new_chat
-    except Exception as e:
-        print(f"Error creating chat with history: {e}. Starting fresh.")
-        new_chat = client.chats.create(model=model_name)
-        user_chats[user_id] = new_chat
-        return new_chat
+    # Never silently discard a saved conversation when restoration fails.
+    new_chat = client.chats.create(model=model_name, history=history)
+    user_chats[user_id] = new_chat
+    return new_chat
 
 
 def save_active_chat(user_id):
@@ -255,6 +290,7 @@ def ensure_user_started(func):
     """Декоратор: проверяет, начал ли пользователь диалог командой /start (есть ли в БД)."""
 
     @wraps(func)
+    @serialize_user_operation
     def wrapper(message, *args, **kwargs):
         if isinstance(message, telebot.types.CallbackQuery):
             user_id = message.from_user.id
@@ -371,6 +407,7 @@ def send_gemini_response_with_images(
 
 
 @bot.message_handler(commands=["help"])
+@serialize_user_operation
 def handle_help_command(message):
     """Выводит подробную справку по функциям бота."""
     with SessionLocal() as session:
@@ -413,6 +450,7 @@ def handle_unlock_pro(message):
 
 
 @bot.message_handler(commands=["start"])
+@serialize_user_operation
 def send_welcome(message):
     """Обрабатывает команду /start."""
     user_id = message.from_user.id
@@ -619,6 +657,42 @@ def handle_search_command(message):
             send_mode, search_enabled, current_model
         ),
     )
+
+
+@bot.message_handler(commands=["context"])
+@bot.message_handler(func=lambda message: message.text == "Контекст 🧠")
+@ensure_user_started
+def show_context_size(message):
+    user_id = message.from_user.id
+    with SessionLocal() as session:
+        user = crud.get_user(session, user_id)
+        model = user.current_model
+    try:
+        history = get_active_chat(user_id, model).get_history(curated=True)
+        files = get_file_context_list(user_id)
+        buffer = get_message_buffer_list(user_id)
+        contents = context_contents(history, files, buffer)
+        total = client.models.count_tokens(model=model, contents=contents).total_tokens if contents else 0
+        if not isinstance(total, int) or total < 0:
+            raise ValueError("No token count returned")
+        limit = None
+        try:
+            limit = client.models.get(model=model).input_token_limit
+        except Exception:
+            pass
+        lines = [f"Контекст 🧠 · {get_model_alias(model)}", f"Размер: ≈{total:,} токенов".replace(",", " ")]
+        if isinstance(limit, int) and limit > 0:
+            lines.append(f"Лимит входа: {limit:,} · заполнено ≈{total / limit:.1%}".replace(",", " "))
+        lines.extend([
+            f"Сообщений в истории: {len(history)}",
+            f"Ожидающих файлов: {len(files)} · Элементов буфера: {len(buffer)}",
+            "Включены история, ожидающие файлы и буфер. Следующее сообщение и служебные инструменты не включены.",
+            "Для очистки нажмите «Новый чат».",
+        ])
+        bot.reply_to(message, "\n".join(lines))
+    except Exception as error:
+        print(f"Could not count context: {type(error).__name__}")
+        bot.reply_to(message, "Не удалось посчитать контекст. Попробуйте позже; история сохранена.")
 
 
 @bot.message_handler(func=lambda message: message.text.startswith("Модель:"))
@@ -896,22 +970,25 @@ def handle_model_selection(call):
             )
             return
 
-        updated_user = crud.update_user_model(session, user_id, selected_model)
+        if selected_model == user.current_model:
+            bot.answer_callback_query(call.id, text="Эта модель уже выбрана.")
+            return
+        try:
+            old_chat = get_active_chat(user_id, user.current_model)
+            history = portable_history(old_chat.get_history(curated=True))
+            new_chat = client.chats.create(model=selected_model, history=history)
+            updated_user = crud.switch_user_model(
+                session, user_id, selected_model, serialize_history(history)
+            )
+        except Exception as error:
+            print(f"Could not switch model: {type(error).__name__}")
+            bot.answer_callback_query(call.id, text="Не удалось сменить модель. Попробуйте позже.")
+            return
         current_model = updated_user.current_model
         send_mode = updated_user.send_mode
         search_enabled = updated_user.search_enabled
 
-        # Clear DB session and context when switching models
-        crud.clear_chat_session(session, user_id)
-        crud.clear_file_contexts(session, user_id)
-        crud.clear_buffer(session, user_id)
-
-    # Recreate chat (this will be fresh because we cleared DB)
-    if user_id in user_chats:
-        del user_chats[user_id]
-    get_active_chat(user_id, current_model)
-
-    user_last_responses[user_id] = None
+    user_chats[user_id] = new_chat
 
     bot.answer_callback_query(call.id)
     bot.edit_message_text(
@@ -919,13 +996,13 @@ def handle_model_selection(call):
         message_id=call.message.message_id,
         text=(
             f"Выбрана модель: {get_model_alias(selected_model)}\n\n"
-            f"Контекст предыдущего разговора очищен."
+            f"История, файлы и буфер сохранены."
         ),
     )
 
     bot.send_message(
         call.message.chat.id,
-        "Можете начать новый диалог.",
+        "Можете продолжить диалог.",
         reply_markup=get_main_keyboard(
             send_mode, search_enabled, current_model
         ),
