@@ -1,5 +1,6 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 from database.models import User, ChatSession, FileContext, MessageBuffer
 
@@ -174,3 +175,40 @@ def get_buffer(db: Session, user_id: int):
 def clear_buffer(db: Session, user_id: int):
     db.query(MessageBuffer).filter(MessageBuffer.user_id == user_id).delete()
     db.commit()
+
+
+# Admin queries
+
+def get_admin_users(db: Session, only_pro=False, offset=0, limit=8):
+    query = db.query(User)
+    if only_pro:
+        query = query.filter(User.pro_access.is_(True))
+    total = query.count()
+    users = query.order_by(User.last_active_at.desc(), User.id).offset(min(offset, total)).limit(limit).all()
+    return total, users
+
+
+def find_admin_users(db: Session, query: str):
+    query = query.strip().removeprefix("@")
+    if query.isdecimal():
+        # Telegram IDs fit signed SQLite BIGINT.
+        if len(query) > 19 or int(query) > 2**63 - 1:
+            return []
+        user = get_user(db, int(query))
+        return [user] if user else []
+    return db.query(User).filter(func.lower(User.username) == query.lower()).order_by(User.id).limit(20).all()
+
+
+def get_admin_statistics(db: Session):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    total, pro, day, week, month = db.query(
+        func.count(User.id),
+        func.sum(case((User.pro_access.is_(True), 1), else_=0)),
+        *(func.sum(case((User.last_active_at >= now - timedelta(days=days), 1), else_=0))
+          for days in (1, 7, 30)),
+    ).one()
+    return {
+        "total": total, "pro": pro or 0,
+        "day": day or 0, "week": week or 0, "month": month or 0,
+        "models": db.query(User.current_model, func.count(User.id)).group_by(User.current_model).order_by(User.current_model).all(),
+    }

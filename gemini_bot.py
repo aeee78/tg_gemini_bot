@@ -46,6 +46,7 @@ from utils import (
 
 from database import db, crud
 from database.db import SessionLocal
+from admin import register_admin_handlers
 
 load_dotenv()
 
@@ -53,6 +54,9 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 bot.set_my_commands(COMMAND_LIST)
+
+# Register before general message handlers.
+register_admin_handlers(bot, SessionLocal)
 
 # Global stores
 user_chats = {}  # Cache for active chat sessions
