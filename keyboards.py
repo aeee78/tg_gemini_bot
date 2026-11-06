@@ -3,6 +3,7 @@ from telebot import types
 from constants import (
     AVAILABLE_MODELS,
     MODEL_ALIASES,
+    PREMIUM_MODELS,
     SEND_MODE_MANUAL,
     get_model_alias,
 )
@@ -36,11 +37,13 @@ def get_main_keyboard(
     return keyboard
 
 
-def get_model_selection_keyboard():
+def get_model_selection_keyboard(has_pro_access=False):
     """Создает клавиатуру выбора модели."""
     keyboard = types.InlineKeyboardMarkup()
     for model_name in AVAILABLE_MODELS:
         alias = MODEL_ALIASES.get(model_name, model_name)
+        if model_name in PREMIUM_MODELS and not has_pro_access:
+            alias = f"{alias} 🔒"
         keyboard.add(
             types.InlineKeyboardButton(
                 text=alias,

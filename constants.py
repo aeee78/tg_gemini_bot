@@ -23,8 +23,8 @@ AVAILABLE_MODELS = [DEFAULT_MODEL, FLASH_MODEL, IMAGE_MODEL]
 
 MODEL_ALIASES = {
     DEFAULT_MODEL: "3.5 Flash Lite🐣",
-    FLASH_MODEL: "3.8 Flash 🚀 🔒",
-    IMAGE_MODEL: "3.1 Flash IMG🎨 🔒 (генерация и редактирование изображений)",
+    FLASH_MODEL: "3.8 Flash 🚀",
+    IMAGE_MODEL: "3.1 Flash IMG🎨 (генерация и редактирование изображений)",
 }
 
 

@@ -646,7 +646,9 @@ def select_model(message):
     bot.send_message(
         message.chat.id,
         "Выберите модель Gemini:",
-        reply_markup=get_model_selection_keyboard(),
+        reply_markup=get_model_selection_keyboard(
+            has_pro_access=is_whitelisted(message.from_user.id)
+        ),
     )
 
 
