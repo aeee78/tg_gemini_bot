@@ -1,5 +1,5 @@
 """Private Telegram admin panel; independent of bot startup and Gemini."""
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from telebot import types
@@ -7,9 +7,11 @@ from telebot.apihelper import ApiTelegramException
 
 from constants import get_model_alias
 from database import crud
+from database import usage as usage_queries
 
 ADMIN_IDS = frozenset({66765326})
 PAGE_SIZE = 8
+USAGE_PAGE_SIZE = 5
 DISPLAY_TIMEZONE = ZoneInfo('Europe/Moscow')
 
 
@@ -30,6 +32,35 @@ def keyboard(*rows):
     for row in rows:
         markup.row(*(types.InlineKeyboardButton(text, callback_data=data) for text, data in row))
     return markup
+
+
+def token_value(data, name):
+    requests = data['requests']
+    known = data[name + '_known']
+    if not requests:
+        return '0'
+    if not known:
+        return 'неизвестно'
+    value = f"{data[name]:,}".replace(',', ' ')
+    return value + (' (частично)' if known < requests else '')
+
+
+def usage_lines(data, compact=False):
+    requests = data['requests']
+    successes = data['successes'] or 0
+    duration = f"{data['duration']:.2f} с" if requests else '—'
+    lines = [f'Запросы: {requests} · Успешно: {successes} · Ошибки: {requests - successes}']
+    fields = [('prompt_tokens', 'Вход'), ('output_tokens', 'Ответ'), ('thinking_tokens', 'Thinking'),
+              ('cached_tokens', 'Из кеша'), ('tool_tokens', 'Вход инструментов'), ('total_tokens', 'Всего')]
+    if compact:
+        lines.append(' · '.join(f'{label}: {token_value(data, name)}' for name, label in fields))
+    else:
+        lines.extend(f'{label}: {token_value(data, name)}' for name, label in fields)
+        unknown = requests - data['total_tokens_known']
+        if unknown:
+            lines.append(f'Без данных об общем расходе: {unknown} запросов')
+    lines.append(f'Среднее время API: {duration}')
+    return lines
 
 
 class AdminPanel:
@@ -60,6 +91,7 @@ class AdminPanel:
             [('🔑 Белый список', 'admin:users:pro:0')],
             [('🔎 Найти пользователя', 'admin:search')],
             [('📊 Статистика', 'admin:stats')],
+            [('📈 Расход', 'admin:usage:today:sum:0:0')],
         ), edit)
 
     def users(self, message, scope='all', page=0, edit=True):
@@ -107,7 +139,7 @@ class AdminPanel:
                 if user.pro_access else
                 ('Выдать доступ', f'admin:set:{user_id}:1:{scope}:{page}')
             )
-        self.show(message, text, keyboard([action], back, [('В меню', 'admin:home')]), edit)
+        self.show(message, text, keyboard([action], [('📈 Расход', f'admin:usage:today:sum:{user_id}:0')], back, [('В меню', 'admin:home')]), edit)
 
     def search(self, message, query):
         with self.sessions() as session:
@@ -136,6 +168,62 @@ class AdminPanel:
             [('Обновить', 'admin:stats')], [('В меню', 'admin:home')],
         ), edit=True)
 
+    def usage(self, message, period='today', group='sum', user_id=0, page=0):
+        now = datetime.now(timezone.utc)
+        today = now.astimezone(DISPLAY_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+        since = None if period == 'all' else (
+            today - timedelta(days={'today': 0, 'week': 6, 'month': 29}[period])
+        ).astimezone(timezone.utc).replace(tzinfo=None)
+        until = now.replace(tzinfo=None)
+        target = user_id or None
+        labels = {'today': 'Сегодня', 'week': '7 дней', 'month': '30 дней', 'all': 'Всё время'}
+        lines = [f'📈 Расход · {labels[period]} (Москва)']
+        with self.sessions() as session:
+            if target:
+                user = crud.get_user(session, target)
+                lines.append(f'Пользователь: {user_label(user) if user else target} · ID {target}')
+            data = usage_queries.summary(session, since, until, target)
+            lines.extend(['', *usage_lines(data)])
+            detail_rows = []
+            if group != 'sum':
+                results, page, pages = usage_queries.breakdown(
+                    session, group, since, until, target, page, USAGE_PAGE_SIZE,
+                )
+                lines.extend(['', 'По моделям:' if group == 'models' else 'По пользователям:'])
+                if not results:
+                    lines.append('Запросов пока нет.')
+                for result in results:
+                    label = (get_model_alias(result['group_id'], result['group_id'])
+                             if group == 'models' else result['label'])
+                    lines.extend(['', label[:100], *usage_lines(result, compact=True)])
+                    if group == 'users':
+                        detail_rows.append([(label[:50], f'admin:usage:{period}:sum:{result["group_id"]}:0')])
+                if pages > 1:
+                    lines.append(f'Страница {page + 1} из {pages}')
+                    navigation = []
+                    if page:
+                        navigation.append(('←', f'admin:usage:{period}:{group}:{user_id}:{page - 1}'))
+                    if page + 1 < pages:
+                        navigation.append(('→', f'admin:usage:{period}:{group}:{user_id}:{page + 1}'))
+                    detail_rows.append(navigation)
+            first = data['first_recorded_at']
+            lines.extend(['', f'Учёт с: {format_date(first) if first else "первого запроса после обновления"}',
+                          'Кеш входит во входные токены. Время — вызов API.'])
+        def route(p=period, g=group, u=user_id, n=0):
+            return f'admin:usage:{p}:{g}:{u}:{n}'
+        rows = [
+            [(label, route(p=p)) for p, label in [('today', 'Сегодня'), ('week', '7 дней'), ('month', '30 дней'), ('all', 'Всё время')]],
+            [('Общее', route(g='sum')), ('По моделям', route(g='models'))],
+        ]
+        if not target:
+            rows.append([('По пользователям', route(g='users'))])
+        rows.extend(detail_rows)
+        rows.append([('Обновить', route(n=page))])
+        if target:
+            rows.append([('← Карточка', f'admin:user:{user_id}:all:0'), ('Общий расход', 'admin:usage:today:sum:0:0')])
+        rows.append([('В меню', 'admin:home')])
+        self.show(message, '\n'.join(lines), keyboard(*rows), edit=True)
+
     def command(self, message):
         if not self.allowed(message.from_user, message.chat):
             return
@@ -163,6 +251,12 @@ class AdminPanel:
                       keyboard([('В меню', 'admin:home')]), edit=True)
         elif parts == ['admin', 'stats']:
             self.stats(call.message)
+        elif (action == 'usage' and len(parts) == 6
+              and parts[2] in ('today', 'week', 'month', 'all')
+              and parts[3] in ('sum', 'models', 'users')
+              and parts[4].isdecimal() and len(parts[4]) <= 19
+              and int(parts[4]) < 2**63 and parts[5].isdecimal()):
+            self.usage(call.message, parts[2], parts[3], int(parts[4]), int(parts[5]))
         elif action == 'users' and len(parts) == 4 and parts[2] in ('all', 'pro') and parts[3].isdigit():
             self.users(call.message, parts[2], int(parts[3]))
         elif action in ('user', 'confirm') and len(parts) == 5 and parts[2].isdigit() and parts[3] in ('all', 'pro') and parts[4].isdigit():

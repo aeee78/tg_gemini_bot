@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from constants import DEFAULT_MODEL, FLASH_MODEL
 from database import crud, db
+from database.models import UsageRecord
 
 
 class TestWhitelistMigration(unittest.TestCase):
@@ -78,6 +80,17 @@ class TestWhitelistMigration(unittest.TestCase):
         with self.sessions() as session:
             self.assertTrue(crud.has_pro_access(session, 123))
             self.assertTrue(crud.has_pro_access(session, 789))
+
+    def test_usage_table_is_added_to_existing_database_and_preserved(self):
+        db.init_db(self.whitelist)
+        with self.sessions() as session:
+            session.add(UsageRecord(user_id=123, model=FLASH_MODEL, operation='chat',
+                                    started_at=datetime(2026, 11, 6), duration_seconds=1,
+                                    success=True, total_tokens=12))
+            session.commit()
+        db.init_db(self.whitelist)
+        with self.sessions() as session:
+            self.assertEqual(session.query(UsageRecord).one().total_tokens, 12)
 
     def test_new_database_defaults_to_no_access(self):
         with self.engine.begin() as connection:

@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     LargeBinary,
     DateTime,
+    Float,
 )
 from sqlalchemy.orm import relationship
 from database.db import Base
@@ -80,3 +81,23 @@ class MessageBuffer(Base):
     mime_type = Column(String, nullable=True)
 
     user = relationship("User", back_populates="message_buffer")
+
+
+class UsageRecord(Base):
+    __tablename__ = "usage_records"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, nullable=False, index=True)
+    model = Column(String, nullable=False, index=True)
+    operation = Column(String, nullable=False)
+    started_at = Column(DateTime, nullable=False, index=True)  # UTC
+    duration_seconds = Column(Float, nullable=False)
+    success = Column(Boolean, nullable=False)
+    error_type = Column(String, nullable=True)
+    error_code = Column(Integer, nullable=True)
+    prompt_tokens = Column(BigInteger, nullable=True)
+    output_tokens = Column(BigInteger, nullable=True)
+    thinking_tokens = Column(BigInteger, nullable=True)
+    cached_tokens = Column(BigInteger, nullable=True)
+    tool_tokens = Column(BigInteger, nullable=True)
+    total_tokens = Column(BigInteger, nullable=True)

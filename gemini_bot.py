@@ -47,6 +47,7 @@ from utils import (
 from database import db, crud
 from database.db import SessionLocal
 from admin import register_admin_handlers
+from usage import track_gemini_call
 
 load_dotenv()
 
@@ -741,7 +742,8 @@ def handle_send_all(message):
                 tools.append(Tool(google_search=GoogleSearch()))
             gemini_config = GenerateContentConfig(tools=tools)
 
-        response = chat_session.send_message(
+        response = track_gemini_call(
+            user_id, current_model, "buffer", chat_session.send_message,
             message=combined_parts, config=gemini_config
         )
         save_active_chat(user_id)  # Save history
@@ -1100,11 +1102,15 @@ def handle_photo(message):
             gemini_config = GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"]
             )
-            response = chat_session.send_message(
+            response = track_gemini_call(
+                user_id, current_model, "photo", chat_session.send_message,
                 message=api_message_parts, config=gemini_config
             )
         else:
-            response = chat_session.send_message(message=api_message_parts)
+            response = track_gemini_call(
+                user_id, current_model, "photo", chat_session.send_message,
+                message=api_message_parts,
+            )
         save_active_chat(user_id)  # Save
 
         if is_image_generation_model(current_model):
@@ -1193,7 +1199,8 @@ def handle_quick_tool_command(message):
         if is_image_generation_model(model_to_use):
             config_kwargs["response_modalities"] = ["TEXT", "IMAGE"]
 
-        response = client.models.generate_content(
+        response = track_gemini_call(
+            user_id, model_to_use, command, client.models.generate_content,
             model=model_to_use,
             contents=user_query,
             config=genai_types.GenerateContentConfig(**config_kwargs),
@@ -1314,7 +1321,8 @@ def handle_message(message):
                 tools.append(Tool(google_search=GoogleSearch()))
             gemini_config = GenerateContentConfig(tools=tools)
 
-        response = chat_session.send_message(
+        response = track_gemini_call(
+            user_id, current_model, "chat", chat_session.send_message,
             message=api_message_parts, config=gemini_config
         )
         save_active_chat(user_id)  # Save history

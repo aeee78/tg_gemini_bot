@@ -42,7 +42,7 @@ class TestAdmin(unittest.TestCase):
         self.message.from_user = SimpleNamespace(id=999)
         with patch.object(self.panel, 'sessions') as sessions:
             self.panel.command(self.message)
-            for data in ('admin:users:all:0', 'admin:stats', 'admin:set:123:0:all:0'):
+            for data in ('admin:users:all:0', 'admin:stats', 'admin:usage:all:sum:0:0', 'admin:set:123:0:all:0'):
                 self.call(data, actor=self.message.from_user)
             sessions.assert_not_called()
         self.bot.send_message.assert_not_called()
