@@ -20,6 +20,7 @@ class User(Base):
     current_model = Column(String, default=DEFAULT_MODEL)
     send_mode = Column(String, default=SEND_MODE_IMMEDIATE)
     search_enabled = Column(Boolean, default=True)
+    pro_access = Column(Boolean, nullable=False, default=False, server_default="0")
 
     # Relationships
     chat_session = relationship(

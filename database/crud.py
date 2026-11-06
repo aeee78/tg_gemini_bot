@@ -22,6 +22,19 @@ def get_or_create_user(db: Session, user_id: int):
     return user
 
 
+def has_pro_access(db: Session, user_id: int):
+    user = get_user(db, user_id)
+    return bool(user and user.pro_access)
+
+
+def set_user_pro_access(db: Session, user_id: int, enabled: bool):
+    user = get_or_create_user(db, user_id)
+    user.pro_access = enabled
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def update_user_model(db: Session, user_id: int, model: str):
     user = get_or_create_user(db, user_id)
     user.current_model = model

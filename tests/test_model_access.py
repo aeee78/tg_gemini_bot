@@ -26,7 +26,6 @@ class TestModelAccess(unittest.TestCase):
         Base.metadata.create_all(self.engine)
         self.session_patch = patch.object(self.app, 'SessionLocal', self.sessions)
         self.session_patch.start()
-        self.app.whitelisted_users.clear()
         self.app.user_chats.clear()
         self.app.bot.reset_mock()
         self.app.client.reset_mock()
@@ -39,9 +38,12 @@ class TestModelAccess(unittest.TestCase):
 
     def tearDown(self):
         self.session_patch.stop()
-        self.app.whitelisted_users.clear()
         self.app.user_chats.clear()
         Base.metadata.drop_all(self.engine)
+
+    def set_access(self, enabled):
+        with self.sessions() as session:
+            crud.set_user_pro_access(session, 123, enabled)
 
     def test_new_user_defaults_to_lite(self):
         with self.sessions() as session:
@@ -57,9 +59,7 @@ class TestModelAccess(unittest.TestCase):
             (IMAGE_MODEL, True, IMAGE_MODEL),
         ]:
             with self.subTest(model=model, unlocked=unlocked), self.sessions() as session:
-                self.app.whitelisted_users.clear()
-                if unlocked:
-                    self.app.whitelisted_users.add(123)
+                self.set_access(unlocked)
                 user = crud.update_user_model(session, 123, model)
                 crud.save_chat_session(session, 123, '[]')
                 self.app.user_chats[123] = object()
@@ -84,17 +84,17 @@ class TestModelAccess(unittest.TestCase):
         for command in ('promptpro', 'table', 'dayplanner'):
             with self.subTest(command=command):
                 self.message.text = '/' + command + ' hello'
-                self.app.whitelisted_users.clear()
+                self.set_access(False)
                 self.app.client.reset_mock()
                 self.app.handle_quick_tool_command.__wrapped__(self.message)
                 self.app.client.models.generate_content.assert_not_called()
-                self.app.whitelisted_users.add(123)
+                self.set_access(True)
                 with patch.object(self.app, 'send_rich_response'), patch.object(self.app, 'send_text_as_file'):
                     self.app.handle_quick_tool_command.__wrapped__(self.message)
                 self.assertEqual(self.app.client.models.generate_content.call_args.kwargs['model'], FLASH_MODEL)
 
     def test_unlocked_user_can_select_premium_models(self):
-        self.app.whitelisted_users.add(123)
+        self.set_access(True)
         for model in (FLASH_MODEL, IMAGE_MODEL):
             with self.subTest(model=model):
                 call = SimpleNamespace(from_user=self.message.from_user,
@@ -109,6 +109,16 @@ class TestModelAccess(unittest.TestCase):
         with patch.object(self.app, 'send_rich_response'):
             self.app.handle_quick_tool_command.__wrapped__(self.message)
         self.assertEqual(self.app.client.models.generate_content.call_args.kwargs['model'], DEFAULT_MODEL)
+
+    def test_unlock_persists_access_and_revocation_is_immediate(self):
+        self.message.text = '/unlock_pro test-code'
+        with patch.object(self.app, 'PRO_CODE', 'test-code'):
+            self.app.handle_unlock_pro.__wrapped__(self.message)
+        with self.sessions() as session:
+            self.assertTrue(crud.get_user(session, 123).pro_access)
+        self.assertTrue(self.app.is_whitelisted(123))
+        self.set_access(False)
+        self.assertFalse(self.app.is_whitelisted(123))
 
     def test_unset_access_code_does_not_unlock(self):
         self.message.text = '/unlock_pro None'

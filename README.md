@@ -172,7 +172,7 @@
 -   **Важные примечания:**
     *   **Systemd сервис:** Файл сервиса (например, `tg_gemini_bot.service`) должен быть заранее создан в `/etc/systemd/system/` и настроен для запуска `gemini_bot.py` из виртуального окружения.
     *   **Python версия:** Скрипт развертывания ориентирован на Python 3.13.
-    *   **`whitelist.txt`:** Этот файл исключен из синхронизации, чтобы не перезаписывать существующий на сервере.
+    *   **Доступ к закрытым моделям:** Хранится в `users.pro_access` в `bot.db`. При первом запуске обновлённого бота все ID из `whitelist.txt` однократно импортируются с `pro_access=True`, включая отсутствующих в базе пользователей. Повторный запуск не восстанавливает отозванный доступ. Файл остаётся резервной копией, исключённой из синхронизации; новые разблокировки сохраняются только в базе.
     *   **Права доступа:** Скрипт предполагает наличие прав на установку пакетов и управление сервисами `systemd` на сервере.
 
 **Примечание:** Вы также можете бесплатно разместить проект на [pythonanywhere.com](https://www.pythonanywhere.com/), но автоматическое развертывание через GitHub Actions настроено для выделенного сервера с `systemd`.
@@ -352,7 +352,7 @@ The project is configured for automatic deployment to a server (Debian/Ubuntu-ba
 -   **Important Notes:**
     *   **Systemd service:** The service file (e.g., `tg_gemini_bot.service`) must be created in `/etc/systemd/system/` beforehand and configured to run `gemini_bot.py` from the virtual environment.
     *   **Python version:** The deployment script targets Python 3.13.
-    *   **`whitelist.txt`:** This file is excluded from synchronization to avoid overwriting an existing one on the server.
+    *   **Premium access:** Stored in `users.pro_access` in `bot.db`. On the first updated startup, all IDs from `whitelist.txt` are imported once with `pro_access=True`, creating missing users. Restarts do not restore revoked access. The file remains an excluded backup; new unlocks are stored only in the database.
     *   **Permissions:** The script assumes it has permissions to install packages and manage `systemd` services on the server.
 
 **Note:** You can also host the project for free on [pythonanywhere.com](https://www.pythonanywhere.com/), but automatic deployment via GitHub Actions is configured for a dedicated server with `systemd`.

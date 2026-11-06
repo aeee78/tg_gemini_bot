@@ -58,9 +58,6 @@ bot.set_my_commands(COMMAND_LIST)
 user_chats = {}  # Cache for active chat sessions
 user_last_responses = {}
 
-WHITELIST_FILE = "whitelist.txt"
-whitelisted_users = set()
-
 # --- Helper Functions for Persistence ---
 
 
@@ -98,7 +95,7 @@ def deserialize_history(history_json):
 
 def ensure_user_model(session, user):
     """Apply current model availability and access to saved user settings."""
-    model_name = resolve_user_model(user.current_model, is_whitelisted(user.id))
+    model_name = resolve_user_model(user.current_model, user.pro_access)
     if model_name != user.current_model:
         user = crud.update_user_model(session, user.id, model_name)
         user_chats.pop(user.id, None)
@@ -237,39 +234,16 @@ def clear_user_context_db(user_id):
         crud.clear_buffer(session, user_id)
 
 
-def load_whitelist():
-    """Загружает белый список пользователей из файла"""
-    try:
-        with open(WHITELIST_FILE, "r") as f:
-            for line in f:
-                user_id = line.strip()
-                if user_id:
-                    whitelisted_users.add(int(user_id))
-        print(f"Loaded {len(whitelisted_users)} users into whitelist.")
-    except FileNotFoundError:
-        print(
-            f"Whitelist file '{WHITELIST_FILE}' not found. Starting with empty whitelist."
-        )
-    except Exception as e:
-        print(f"Error loading whitelist: {e}")
-
-
 def add_to_whitelist(user_id):
-    """Добавляет пользователя в белый список."""
-    if user_id not in whitelisted_users:
-        try:
-            with open(WHITELIST_FILE, "a") as f:
-                f.write(f"{user_id}\n")
-            whitelisted_users.add(user_id)
-            print(f"Added user {user_id} to whitelist.")
-        except Exception as e:
-            print(f"Error adding user {user_id} to whitelist: {e}")
+    """Persist premium access in the users table."""
+    with SessionLocal() as session:
+        crud.set_user_pro_access(session, user_id, True)
 
 
 def is_whitelisted(user_id):
-    """Checks if a user ID is in the whitelist."""
-
-    return user_id in whitelisted_users
+    """Read access from the database so changes apply immediately."""
+    with SessionLocal() as session:
+        return crud.has_pro_access(session, user_id)
 
 
 def ensure_user_started(func):
@@ -1404,5 +1378,4 @@ def handle_message(message):
 
 if __name__ == "__main__":
     db.init_db()
-    load_whitelist()
     bot.polling(none_stop=True)
