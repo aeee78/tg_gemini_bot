@@ -227,7 +227,7 @@ def get_message_buffer_list(user_id):
                 entry["caption"] = item.content or ""
                 if item.blob_data:
                     entry["image"] = Image.open(io.BytesIO(item.blob_data))
-            elif item.item_type == "document":
+            elif item.item_type in ("document", "voice"):
                 entry["mime_type"] = item.mime_type
                 entry["data"] = item.blob_data
                 entry["filename"] = item.filename
@@ -256,11 +256,11 @@ def add_to_message_buffer(user_id, entry):
                 content=entry.get("caption"),
                 blob_data=img_bytes,
             )
-        elif entry["type"] == "document":
+        elif entry["type"] in ("document", "voice"):
             crud.add_to_buffer(
                 session,
                 user_id,
-                "document",
+                entry["type"],
                 content=entry.get("caption"),
                 blob_data=entry["data"],
                 filename=entry["filename"],
@@ -744,6 +744,11 @@ def handle_send_all(message):
         )
         return
 
+    has_voice = any(item["type"] == "voice" for item in buffered_items)
+    if has_voice and is_image_generation_model(current_model):
+        bot.reply_to(message, "Для голосовых выберите Flash Lite или Flash. Буфер сохранён.")
+        return
+
     # Load/Ensure chat exists
     chat_session = get_active_chat(user_id, current_model)
 
@@ -764,6 +769,13 @@ def handle_send_all(message):
             if item.get("caption"):
                 combined_parts.append(item["caption"])
             combined_parts.append(item["image"])
+        elif item["type"] == "voice":
+            if current_text_block:
+                combined_parts.append(current_text_block)
+                current_text_block = ""
+            combined_parts.append(genai_types.Part.from_bytes(
+                mime_type=item["mime_type"], data=item["data"]
+            ))
         elif item["type"] == "document":
             if current_text_block:
                 combined_parts.append(current_text_block)
@@ -802,7 +814,7 @@ def handle_send_all(message):
 
     bot.send_chat_action(chat_id, "typing")
     status_msg = bot.reply_to(
-        message, "Отправляю накопленные сообщения и фото в Gemini..."
+        message, "Отправляю накопленные сообщения и вложения в Gemini..."
     )
 
     try:
@@ -814,7 +826,11 @@ def handle_send_all(message):
             tools = [Tool(url_context=genai_types.UrlContext())]
             if search_enabled:
                 tools.append(Tool(google_search=GoogleSearch()))
-            gemini_config = GenerateContentConfig(tools=tools)
+            gemini_config = GenerateContentConfig(
+                tools=tools,
+                response_modalities=["TEXT"] if has_voice else None,
+                system_instruction=VOICE_INSTRUCTION if has_voice else None,
+            )
 
         response = track_gemini_call(
             user_id, current_model, "buffer", chat_session.send_message,
@@ -1114,6 +1130,82 @@ def handle_document(message):
                 current_mode, search_enabled, current_model
             ),
         )
+
+
+VOICE_INSTRUCTION = (
+    "Treat the voice recording as a normal user message in this conversation. "
+    "Answer its question or carry out its request rather than merely transcribing it. "
+    "Reply in text in the user's language."
+)
+
+
+@bot.message_handler(content_types=["voice"])
+@ensure_user_started
+def handle_voice(message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    with SessionLocal() as session:
+        user = crud.get_user(session, user_id)
+        current_model, current_mode = user.current_model, user.send_mode
+        search_enabled = user.search_enabled
+    if is_image_generation_model(current_model):
+        bot.reply_to(message, "Для голосовых выберите Flash Lite или Flash.")
+        return
+    max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+    if (message.voice.file_size or 0) > max_bytes:
+        bot.reply_to(message, f"Голосовое слишком большое. Максимум {MAX_FILE_SIZE_MB} МБ.")
+        return
+    try:
+        bot.send_chat_action(chat_id, "typing")
+        file_info = bot.get_file(message.voice.file_id)
+        if (file_info.file_size or 0) > max_bytes:
+            bot.reply_to(message, f"Голосовое слишком большое. Максимум {MAX_FILE_SIZE_MB} МБ.")
+            return
+        data = bot.download_file(file_info.file_path)
+        if not data or len(data) > max_bytes:
+            bot.reply_to(message, f"Не удалось прочитать голосовое. Максимум {MAX_FILE_SIZE_MB} МБ.")
+            return
+        mime_type = message.voice.mime_type or "audio/ogg"
+        if current_mode == SEND_MODE_MANUAL:
+            add_to_message_buffer(user_id, {
+                "type": "voice", "data": data, "mime_type": mime_type,
+                "filename": "voice", "caption": "",
+            })
+            with SessionLocal() as session:
+                count = len(crud.get_buffer(session, user_id))
+            bot.reply_to(message, f"🎤 Голосовое добавлено в буфер ({count} шт.). Нажмите «Отправить всё».")
+            return
+        files = get_file_context_list(user_id)
+        pending = context_contents([], files, [])
+        parts = list(pending[0].parts) if pending else []
+        parts.append(genai_types.Part.from_bytes(data=data, mime_type=mime_type))
+        tools = [Tool(url_context=genai_types.UrlContext())]
+        if search_enabled:
+            tools.append(Tool(google_search=GoogleSearch()))
+        chat = get_active_chat(user_id, current_model)
+        response = track_gemini_call(
+            user_id, current_model, "voice", chat.send_message,
+            message=parts,
+            config=GenerateContentConfig(
+                response_modalities=["TEXT"], system_instruction=VOICE_INSTRUCTION, tools=tools,
+            ),
+        )
+        save_active_chat(user_id)
+        if files:
+            with SessionLocal() as session:
+                crud.clear_file_contexts(session, user_id)
+        text = response.text
+        if not text:
+            bot.reply_to(message, "Модель не вернула текстовый ответ. Попробуйте переформулировать голосовое.")
+            return
+        user_last_responses[user_id] = text
+        send_rich_response(
+            bot, chat_id, text, reply_to_message_id=message.message_id,
+            fallback_download_keyboard=get_file_download_keyboard(user_id),
+        )
+    except Exception as error:
+        print(f"Could not process voice message: {type(error).__name__}")
+        bot.reply_to(message, "Не удалось обработать голосовое. Попробуйте отправить его ещё раз.")
 
 
 @bot.message_handler(content_types=["photo"])

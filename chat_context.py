@@ -41,6 +41,8 @@ def context_contents(history, files, buffer):
             stream = io.BytesIO()
             image.save(stream, format=image.format or 'PNG')
             parts.append(types.Part.from_bytes(data=stream.getvalue(), mime_type=Image.MIME.get(image.format or 'PNG', 'image/png')))
+        elif entry['type'] == 'voice':
+            parts.append(types.Part.from_bytes(data=entry['data'], mime_type=entry['mime_type']))
         elif entry['type'] == 'document':
             parts.append(types.Part.from_bytes(data=entry['data'], mime_type=entry['mime_type']))
             parts.append(types.Part.from_text(text=f"(Файл: {entry['filename']})"))

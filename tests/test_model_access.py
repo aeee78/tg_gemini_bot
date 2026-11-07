@@ -235,6 +235,106 @@ class TestModelAccess(unittest.TestCase):
             release.set()
             thread.join(3)
 
+    def prepare_voice(self):
+        from google.genai import types
+        self.message.voice = SimpleNamespace(file_id='voice-id', file_size=8, mime_type='audio/ogg')
+        self.app.bot.get_file.return_value = SimpleNamespace(file_size=8, file_path='voice.oga')
+        self.app.bot.download_file.return_value = b'OggS-test'
+        response = SimpleNamespace(text='Текстовый ответ', candidates=[], usage_metadata=types.GenerateContentResponseUsageMetadata(
+            prompt_token_count=40, candidates_token_count=5, total_token_count=45))
+        chat = MagicMock()
+        chat.send_message.return_value = response
+        chat.get_history.return_value = [
+            types.Content(role='user', parts=[types.Part.from_bytes(data=b'OggS-test', mime_type='audio/ogg')]),
+            types.Content(role='model', parts=[types.Part(text='Текстовый ответ')]),
+        ]
+        self.app.user_chats[123] = chat
+        return chat
+
+    def test_voice_replies_in_text_saves_audio_history_and_records_usage(self):
+        from database.models import UsageRecord
+        chat = self.prepare_voice()
+        with self.sessions() as session:
+            crud.add_file_context(session, 123, 'note.txt', 'text/plain', b'note')
+        with patch.object(self.app, 'send_rich_response') as send:
+            self.app.handle_voice.__wrapped__(self.message)
+        kwargs = chat.send_message.call_args.kwargs
+        self.assertEqual(kwargs['config'].response_modalities, ['TEXT'])
+        self.assertIn('normal user message', kwargs['config'].system_instruction)
+        blobs = [part.inline_data for part in kwargs['message'] if part.inline_data]
+        self.assertEqual([(blob.mime_type, blob.data) for blob in blobs],
+                         [('text/plain', b'note'), ('audio/ogg', b'OggS-test')])
+        self.assertEqual(send.call_args.args[2], 'Текстовый ответ')
+        self.assertEqual(self.app.user_last_responses[123], 'Текстовый ответ')
+        with self.sessions() as session:
+            stored = self.app.deserialize_history(crud.get_chat_session(session, 123).history_json)
+            self.assertEqual(stored[0].parts[0].inline_data.data, b'OggS-test')
+            self.assertEqual(len(crud.get_file_contexts(session, 123)), 0)
+            usage = session.query(UsageRecord).one()
+            self.assertEqual((usage.operation, usage.total_tokens, usage.success), ('voice', 45, True))
+
+    def test_voice_manual_buffer_survives_reload_and_sends_with_text(self):
+        from chat_context import context_contents
+        from constants import SEND_MODE_MANUAL
+        chat = self.prepare_voice()
+        with self.sessions() as session:
+            crud.update_user_send_mode(session, 123, SEND_MODE_MANUAL)
+        self.app.handle_voice.__wrapped__(self.message)
+        chat.send_message.assert_not_called()
+        buffer = self.app.get_message_buffer_list(123)
+        self.assertEqual((buffer[0]['type'], buffer[0]['mime_type'], buffer[0]['data']),
+                         ('voice', 'audio/ogg', b'OggS-test'))
+        self.assertEqual(context_contents([], [], buffer)[0].parts[0].inline_data.data, b'OggS-test')
+        with self.sessions() as session:
+            crud.add_to_buffer(session, 123, 'text', content='Дополнительный вопрос')
+        with patch.object(self.app, 'send_rich_response'):
+            self.app.handle_send_all.__wrapped__(self.message)
+        kwargs = chat.send_message.call_args.kwargs
+        self.assertEqual(kwargs['config'].response_modalities, ['TEXT'])
+        self.assertEqual(kwargs['message'][0].inline_data.data, b'OggS-test')
+        self.assertEqual(kwargs['message'][1], 'Дополнительный вопрос')
+        with self.sessions() as session:
+            self.assertEqual(len(crud.get_buffer(session, 123)), 0)
+
+    def test_voice_generation_failure_is_counted_and_files_remain(self):
+        from database.models import UsageRecord
+        chat = self.prepare_voice()
+        chat.send_message.side_effect = RuntimeError('API failed')
+        with self.sessions() as session:
+            crud.add_file_context(session, 123, 'note.txt', 'text/plain', b'note')
+        self.app.handle_voice.__wrapped__(self.message)
+        with self.sessions() as session:
+            self.assertEqual(len(crud.get_file_contexts(session, 123)), 1)
+            usage = session.query(UsageRecord).one()
+            self.assertFalse(usage.success)
+            self.assertIsNone(usage.total_tokens)
+        self.assertIn('Не удалось обработать голосовое', self.app.bot.reply_to.call_args.args[1])
+
+    def test_voice_limits_reject_oversized_data_before_gemini(self):
+        chat = self.prepare_voice()
+        for declared, remote, data in [(1048577, 8, b'a'), (8, 1048577, b'a'), (8, 8, b'a' * 1048577)]:
+            with self.subTest(declared=declared, remote=remote):
+                self.message.voice.file_size = declared
+                self.app.bot.get_file.return_value.file_size = remote
+                self.app.bot.download_file.return_value = data
+                with patch.object(self.app, 'MAX_FILE_SIZE_MB', 1):
+                    self.app.handle_voice.__wrapped__(self.message)
+                chat.send_message.assert_not_called()
+
+    def test_image_model_does_not_download_voice_or_clear_pending_audio(self):
+        from constants import SEND_MODE_MANUAL
+        chat = self.prepare_voice()
+        with self.sessions() as session:
+            crud.update_user_model(session, 123, IMAGE_MODEL)
+            crud.update_user_send_mode(session, 123, SEND_MODE_MANUAL)
+            crud.add_to_buffer(session, 123, 'voice', blob_data=b'voice', mime_type='audio/ogg')
+        self.app.handle_voice.__wrapped__(self.message)
+        self.app.bot.download_file.assert_not_called()
+        self.app.handle_send_all.__wrapped__(self.message)
+        chat.send_message.assert_not_called()
+        with self.sessions() as session:
+            self.assertEqual(len(crud.get_buffer(session, 123)), 1)
+
     def test_unset_access_code_does_not_unlock(self):
         self.message.text = '/unlock_pro None'
         with patch.object(self.app, 'PRO_CODE', None), patch.object(self.app, 'add_to_whitelist') as add:
