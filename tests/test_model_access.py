@@ -335,6 +335,18 @@ class TestModelAccess(unittest.TestCase):
         with self.sessions() as session:
             self.assertEqual(len(crud.get_buffer(session, 123)), 1)
 
+    def test_audio_history_cannot_be_silently_sent_to_image_model(self):
+        chat = self.prepare_voice()
+        self.set_access(True)
+        call = SimpleNamespace(from_user=self.message.from_user, message=self.message,
+                               id='callback', data='model_' + IMAGE_MODEL)
+        with patch.object(self.app.client.chats, 'create') as create:
+            self.app.handle_model_selection.__wrapped__(call)
+            create.assert_not_called()
+        self.assertIs(self.app.user_chats[123], chat)
+        with self.sessions() as session:
+            self.assertEqual(crud.get_user(session, 123).current_model, DEFAULT_MODEL)
+
     def test_unset_access_code_does_not_unlock(self):
         self.message.text = '/unlock_pro None'
         with patch.object(self.app, 'PRO_CODE', None), patch.object(self.app, 'add_to_whitelist') as add:

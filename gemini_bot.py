@@ -49,7 +49,7 @@ from database import db, crud
 from database.db import SessionLocal
 from admin import register_admin_handlers
 from usage import track_gemini_call
-from chat_context import serialize_history, portable_history, context_contents
+from chat_context import serialize_history, portable_history, context_contents, contains_audio
 
 load_dotenv()
 
@@ -992,6 +992,13 @@ def handle_model_selection(call):
         try:
             old_chat = get_active_chat(user_id, user.current_model)
             history = portable_history(old_chat.get_history(curated=True))
+            if is_image_generation_model(selected_model) and contains_audio(history):
+                bot.answer_callback_query(
+                    call.id,
+                    text="В истории есть голосовые. Для модели изображений начните новый чат.",
+                    show_alert=True,
+                )
+                return
             new_chat = client.chats.create(model=selected_model, history=history)
             updated_user = crud.switch_user_model(
                 session, user_id, selected_model, serialize_history(history)

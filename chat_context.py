@@ -49,3 +49,10 @@ def context_contents(history, files, buffer):
     if parts:
         contents.append(types.Content(role='user', parts=parts))
     return contents
+
+
+def contains_audio(history):
+    return any(
+        (getattr(part.inline_data or part.file_data, 'mime_type', None) or '').startswith('audio/')
+        for content in history for part in (content.parts or [])
+    )
