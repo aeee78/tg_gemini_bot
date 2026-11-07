@@ -49,6 +49,7 @@ from database import db, crud
 from database.db import SessionLocal
 from admin import register_admin_handlers
 from usage import track_gemini_call
+from chat_activity import typing_action
 from chat_context import serialize_history, portable_history, context_contents, contains_audio
 
 load_dotenv()
@@ -93,6 +94,11 @@ def serialize_user_operation(func):
 
 
 # --- Helper Functions for Persistence ---
+
+
+def generate_with_typing(chat_id, *args, **kwargs):
+    with typing_action(bot, chat_id):
+        return track_gemini_call(*args, **kwargs)
 
 
 def deserialize_history(history_json):
@@ -812,7 +818,6 @@ def handle_send_all(message):
         clear_user_context_db(user_id)
         return
 
-    bot.send_chat_action(chat_id, "typing")
     status_msg = bot.reply_to(
         message, "Отправляю накопленные сообщения и вложения в Gemini..."
     )
@@ -832,7 +837,8 @@ def handle_send_all(message):
                 system_instruction=VOICE_INSTRUCTION if has_voice else None,
             )
 
-        response = track_gemini_call(
+        response = generate_with_typing(
+            chat_id,
             user_id, current_model, "buffer", chat_session.send_message,
             message=combined_parts, config=gemini_config
         )
@@ -1163,7 +1169,6 @@ def handle_voice(message):
         bot.reply_to(message, f"Голосовое слишком большое. Максимум {MAX_FILE_SIZE_MB} МБ.")
         return
     try:
-        bot.send_chat_action(chat_id, "typing")
         file_info = bot.get_file(message.voice.file_id)
         if (file_info.file_size or 0) > max_bytes:
             bot.reply_to(message, f"Голосовое слишком большое. Максимум {MAX_FILE_SIZE_MB} МБ.")
@@ -1190,7 +1195,8 @@ def handle_voice(message):
         if search_enabled:
             tools.append(Tool(google_search=GoogleSearch()))
         chat = get_active_chat(user_id, current_model)
-        response = track_gemini_call(
+        response = generate_with_typing(
+            chat_id,
             user_id, current_model, "voice", chat.send_message,
             message=parts,
             config=GenerateContentConfig(
@@ -1231,7 +1237,6 @@ def handle_photo(message):
     caption = message.caption if message.caption else ""
     if current_mode == SEND_MODE_MANUAL:
         try:
-            bot.send_chat_action(chat_id, "typing")
             image_stream = download_telegram_image(file_id)
             img = Image.open(image_stream)
 
@@ -1263,7 +1268,6 @@ def handle_photo(message):
 
     chat_session = get_active_chat(user_id, current_model)
 
-    bot.send_chat_action(chat_id, "typing")
     try:
         image_stream = download_telegram_image(file_id)
         img = Image.open(image_stream)
@@ -1278,12 +1282,14 @@ def handle_photo(message):
             gemini_config = GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"]
             )
-            response = track_gemini_call(
+            response = generate_with_typing(
+                chat_id,
                 user_id, current_model, "photo", chat_session.send_message,
                 message=api_message_parts, config=gemini_config
             )
         else:
-            response = track_gemini_call(
+            response = generate_with_typing(
+                chat_id,
                 user_id, current_model, "photo", chat_session.send_message,
                 message=api_message_parts,
             )
@@ -1353,7 +1359,6 @@ def handle_quick_tool_command(message):
         return
     thinking_budget = tool_config.get("thinking_budget", None)
 
-    bot.send_chat_action(chat_id, "typing")
     status_msg = bot.reply_to(
         message, f"Выполняю команду `{command_with_slash}`..."
     )
@@ -1375,7 +1380,8 @@ def handle_quick_tool_command(message):
         if is_image_generation_model(model_to_use):
             config_kwargs["response_modalities"] = ["TEXT", "IMAGE"]
 
-        response = track_gemini_call(
+        response = generate_with_typing(
+            chat_id,
             user_id, model_to_use, command, client.models.generate_content,
             model=model_to_use,
             contents=user_query,
@@ -1450,8 +1456,6 @@ def handle_message(message):
         )
         return
 
-    bot.send_chat_action(message.chat.id, "typing")
-
     try:
         api_message_parts = []
 
@@ -1497,7 +1501,8 @@ def handle_message(message):
                 tools.append(Tool(google_search=GoogleSearch()))
             gemini_config = GenerateContentConfig(tools=tools)
 
-        response = track_gemini_call(
+        response = generate_with_typing(
+            chat_id,
             user_id, current_model, "chat", chat_session.send_message,
             message=api_message_parts, config=gemini_config
         )
