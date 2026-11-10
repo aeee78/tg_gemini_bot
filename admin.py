@@ -5,18 +5,18 @@ from zoneinfo import ZoneInfo
 from telebot import types
 from telebot.apihelper import ApiTelegramException
 
-from constants import get_model_alias
+from constants import ADMIN_IDS, get_model_alias
 from database import crud
 from database import model_catalog
 from database import usage as usage_queries
 
-ADMIN_IDS = frozenset({66765326})
 PAGE_SIZE = 8
 USAGE_PAGE_SIZE = 5
 DISPLAY_TIMEZONE = ZoneInfo('Europe/Moscow')
 MODEL_ACCESS_LABELS = {
     'public': '🌐 Доступна всем',
     'whitelist': '🔑 Только whitelist',
+    'admin': '🛡 Только админ',
     'disabled': '🚫 Отключена',
 }
 
@@ -111,7 +111,7 @@ class AdminPanel:
             page = min(page, pages - 1)
             rows = []
             for model in models[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]:
-                status = {'public': '🌐', 'whitelist': '🔑', 'disabled': '🚫'}[model.access]
+                status = {'public': '🌐', 'whitelist': '🔑', 'admin': '🛡', 'disabled': '🚫'}[model.access]
                 marker = '⭐ ' if model.name == default else ''
                 missing = ' ⚠️' if not model.available else ''
                 label = f'{marker}{status} {model.display_name or model.name}{missing}'[:64]
@@ -131,7 +131,7 @@ class AdminPanel:
             f'🤖 Модели: {len(models)}', f'Страница {page + 1} из {pages}',
             f'По умолчанию: {default}',
             f'Каталог обновлён: {format_date(last_sync)} (Москва)',
-            '', '🌐 Всем · 🔑 Whitelist · 🚫 Отключена · ⭐ По умолчанию',
+            '', '🌐 Всем · 🔑 Whitelist · 🛡 Только админ · 🚫 Отключена · ⭐ По умолчанию',
             '⚠️ Нет в последнем каталоге Google; настройка доступа сохранена.',
             'Новые модели отключены, пока ты их не включишь.',
             'Наличие в каталоге не гарантирует доступ по тарифу и квотам ключа.',

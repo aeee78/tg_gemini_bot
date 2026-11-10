@@ -56,10 +56,13 @@ class TestModelCatalog(unittest.TestCase):
     def test_default_must_remain_public(self):
         with self.sessions() as session:
             default = catalog.get_model(session, DEFAULT_MODEL)
-            for access in ("disabled", "whitelist"):
+            for access in ("disabled", "whitelist", "admin"):
                 with self.subTest(access=access), self.assertRaises(ValueError):
                     catalog.set_model_access(session, default.id, access)
             flash = catalog.get_model(session, FLASH_MODEL)
+            with self.assertRaises(ValueError):
+                catalog.set_default_model(session, flash.id)
+            catalog.set_model_access(session, flash.id, "admin")
             with self.assertRaises(ValueError):
                 catalog.set_default_model(session, flash.id)
             with self.assertRaises(ValueError):
@@ -68,6 +71,49 @@ class TestModelCatalog(unittest.TestCase):
                 catalog.set_default_model(session, 999)
             self.assertTrue(catalog.can_use_model(session, DEFAULT_MODEL))
             self.assertEqual(catalog.get_default_model(session), DEFAULT_MODEL)
+
+    def test_admin_access_matrix_and_saved_model_fallback(self):
+        with self.sessions() as session:
+            flash = catalog.get_model(session, FLASH_MODEL)
+            for access in ("public", "whitelist", "admin", "disabled"):
+                catalog.set_model_access(session, flash.id, access)
+                for has_pro in (False, True):
+                    for is_admin in (False, True):
+                        expected = (access == "public" or
+                                    (access == "whitelist" and (has_pro or is_admin)) or
+                                    (access == "admin" and is_admin))
+                        with self.subTest(access=access, has_pro=has_pro, is_admin=is_admin):
+                            self.assertEqual(catalog.can_use_model(session, FLASH_MODEL, has_pro, is_admin), expected)
+                            self.assertEqual(catalog.resolve_model(session, FLASH_MODEL, has_pro, is_admin),
+                                             FLASH_MODEL if expected else DEFAULT_MODEL)
+            self.assertFalse(catalog.can_use_model(session, "unknown-model", True, True))
+
+    def test_selection_list_hides_admin_models_from_non_admins(self):
+        with self.sessions() as session:
+            catalog.sync_catalog(session, [google_model("gemini-4-new")])
+            flash = catalog.get_model(session, FLASH_MODEL)
+            catalog.set_model_access(session, flash.id, "admin")
+            self.assertEqual({row.name for row in catalog.list_models(session, include_disabled=False)},
+                             {DEFAULT_MODEL, IMAGE_MODEL})
+            self.assertEqual({row.name for row in catalog.list_models(session, include_disabled=False, is_admin=True)},
+                             {DEFAULT_MODEL, IMAGE_MODEL, FLASH_MODEL})
+            # The management view always includes all policies for editing.
+            self.assertEqual(len(catalog.list_models(session)), 4)
+            self.assertEqual(len(catalog.list_models(session, is_admin=True)), 4)
+
+    def test_refresh_and_restart_preserve_admin_only_policy(self):
+        with self.sessions() as session:
+            flash = catalog.get_model(session, FLASH_MODEL)
+            model_id = flash.id
+            catalog.set_model_access(session, model_id, "admin")
+            catalog.sync_catalog(session, [google_model(FLASH_MODEL)])
+        with self.sessions() as session:
+            catalog.ensure_catalog(session)
+            flash = catalog.get_model(session, FLASH_MODEL)
+            self.assertEqual(flash.id, model_id)
+            self.assertEqual(flash.access, "admin")
+            self.assertFalse(catalog.can_use_model(session, FLASH_MODEL, True))
+            self.assertTrue(catalog.can_use_model(session, FLASH_MODEL, is_admin=True))
 
     def test_stale_sessions_cannot_disable_new_default(self):
         with self.sessions() as stale, self.sessions() as current:

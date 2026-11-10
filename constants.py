@@ -15,6 +15,8 @@ MAX_MESSAGE_LENGTH = 16000
 
 MAX_FILE_SIZE_MB = 20
 
+ADMIN_IDS = frozenset({66765326})
+
 # Initial settings for new databases. Runtime access and defaults live in bot.db.
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 FLASH_MODEL = "gemini-3.8-flash"

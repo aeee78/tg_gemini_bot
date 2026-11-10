@@ -12,6 +12,7 @@ from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 from PIL import Image
 
 from constants import (
+    ADMIN_IDS,
     COMMAND_LIST,
     GEMINI_API_KEY,
     PRO_CODE,
@@ -96,7 +97,9 @@ def serialize_user_operation(func):
 def generate_with_typing(chat_id, user_id, model_name, operation, api_call, *args, **kwargs):
     # Recheck after preparing uploads/config: admin policy may have changed.
     with SessionLocal() as session:
-        if not model_catalog.can_use_model(session, model_name, crud.has_pro_access(session, user_id)):
+        if not model_catalog.can_use_model(
+            session, model_name, crud.has_pro_access(session, user_id), is_admin=user_id in ADMIN_IDS,
+        ):
             raise PermissionError("Доступ к модели изменился. Выберите доступную модель в меню.")
     chat = user_chats.get(user_id)
     if (operation in ('chat', 'photo', 'buffer') and is_image_generation_model(model_name)
@@ -143,7 +146,9 @@ def deserialize_history(history_json):
 
 def ensure_user_model(session, user):
     """Apply current model availability and access to saved user settings."""
-    model_name = model_catalog.resolve_model(session, user.current_model, user.pro_access)
+    model_name = model_catalog.resolve_model(
+        session, user.current_model, user.pro_access, is_admin=user.id in ADMIN_IDS,
+    )
     if model_name != user.current_model:
         cached = user_chats.get(user.id)
         if cached is not None and hasattr(cached, "get_history"):
@@ -722,9 +727,10 @@ def show_context_size(message):
 def select_model(message):
     """Обрабатывает нажатие кнопки "Выбрать модель"."""
     with SessionLocal() as session:
-        models = model_catalog.list_models(session, include_disabled=False)
+        is_admin = message.from_user.id in ADMIN_IDS
+        models = model_catalog.list_models(session, include_disabled=False, is_admin=is_admin)
         markup = get_model_selection_keyboard(
-            models, has_pro_access=crud.has_pro_access(session, message.from_user.id)
+            models, has_pro_access=crud.has_pro_access(session, message.from_user.id), is_admin=is_admin,
         )
     bot.send_message(
         message.chat.id,
@@ -994,13 +1000,15 @@ def handle_model_selection(call):
         else:
             # Old keyboards remain valid only while the current policy permits them.
             model = model_catalog.get_model(session, call.data.removeprefix('model_'))
-        if model is None or model.access == 'disabled':
+        if model is None or model.access == 'disabled' or (model.access == 'admin' and user_id not in ADMIN_IDS):
             bot.answer_callback_query(
                 call.id, text="Эта модель больше недоступна. Выберите модель из меню."
             )
             return
         selected_model = model.name
-        if not model_catalog.can_use_model(session, selected_model, user.pro_access):
+        if not model_catalog.can_use_model(
+            session, selected_model, user.pro_access, is_admin=user_id in ADMIN_IDS,
+        ):
             bot.answer_callback_query(
                 call.id,
                 text="Доступ ограничен. Используйте /unlock_pro <код>",
@@ -1381,7 +1389,12 @@ def handle_quick_tool_command(message):
         if model is None or model.access == 'disabled':
             bot.reply_to(message, "Модель этой команды отключена. Обратитесь к администратору.")
             return
-        if not model_catalog.can_use_model(session, model_to_use, crud.has_pro_access(session, user_id)):
+        if model.access == 'admin' and user_id not in ADMIN_IDS:
+            bot.reply_to(message, "Эта команда доступна только администратору.")
+            return
+        if not model_catalog.can_use_model(
+            session, model_to_use, crud.has_pro_access(session, user_id), is_admin=user_id in ADMIN_IDS,
+        ):
             bot.reply_to(message, "Для этой команды нужен доступ: /unlock_pro <код>.")
             return
     thinking_budget = tool_config.get("thinking_budget", None)

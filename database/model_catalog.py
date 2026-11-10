@@ -8,7 +8,7 @@ from sqlalchemy.dialects.sqlite import insert
 from constants import AVAILABLE_MODELS, DEFAULT_MODEL, MODEL_ALIASES, PREMIUM_MODELS
 from database.models import ModelCatalogSettings, ModelConfig
 
-ACCESS_LEVELS = frozenset({"public", "whitelist", "disabled"})
+ACCESS_LEVELS = frozenset({"public", "whitelist", "admin", "disabled"})
 
 
 def ensure_catalog(session):
@@ -27,11 +27,12 @@ def ensure_catalog(session):
     session.commit()
 
 
-def list_models(session, include_disabled=True):
+def list_models(session, include_disabled=True, is_admin=False):
     ensure_catalog(session)
     query = session.query(ModelConfig)
     if not include_disabled:
-        query = query.filter(ModelConfig.access.in_(("public", "whitelist")))
+        visible = ("public", "whitelist", "admin") if is_admin else ("public", "whitelist")
+        query = query.filter(ModelConfig.access.in_(visible))
     return query.order_by(ModelConfig.name).all()
 
 
@@ -55,14 +56,15 @@ def get_last_sync(session):
     return session.get(ModelCatalogSettings, 1).last_synced_at
 
 
-def can_use_model(session, name, has_pro_access=False):
+def can_use_model(session, name, has_pro_access=False, is_admin=False):
     model = get_model(session, name)
     return bool(model and (model.access == "public" or
-                          (model.access == "whitelist" and has_pro_access)))
+                          (model.access == "whitelist" and (has_pro_access or is_admin)) or
+                          (model.access == "admin" and is_admin)))
 
 
-def resolve_model(session, name, has_pro_access=False):
-    return name if can_use_model(session, name, has_pro_access) else get_default_model(session)
+def resolve_model(session, name, has_pro_access=False, is_admin=False):
+    return name if can_use_model(session, name, has_pro_access, is_admin) else get_default_model(session)
 
 
 def _lock_settings(session):

@@ -9,6 +9,7 @@ from admin import AdminPanel, register_admin_handlers
 from constants import DEFAULT_MODEL, FLASH_MODEL
 from database import model_catalog
 from database.db import Base
+from keyboards import get_model_selection_keyboard
 
 
 def google_model(name, label=None):
@@ -62,6 +63,7 @@ class TestAdminModels(unittest.TestCase):
         routes = [
             'admin:models:0', 'admin:model:1:0', 'admin:modelrefresh',
             'admin:modelaccess:1:disabled:0', 'admin:modeldefault:1:0',
+            'admin:modelaccess:1:admin:0',
         ]
         with patch.object(self.panel, 'sessions') as sessions:
             for route in routes:
@@ -152,6 +154,48 @@ class TestAdminModels(unittest.TestCase):
         self.panel.model_client = None
         self.call('admin:modelrefresh')
         self.assertIn('Обновление каталога сейчас недоступно', self.rendered_text())
+
+    def test_admin_access_control_is_preserved_on_refresh_and_cannot_be_default(self):
+        flash_id = self.model_id(FLASH_MODEL)
+        self.call(f'admin:model:{flash_id}:0')
+        self.assertTrue(any(button['callback_data'] == f'admin:modelaccess:{flash_id}:admin:0'
+                            for button in self.buttons()))
+        self.call(f'admin:modelaccess:{flash_id}:admin:0')
+        self.assertIn('🛡 Только админ', self.rendered_text())
+        with self.sessions() as session:
+            self.assertEqual(model_catalog.get_model(session, FLASH_MODEL).access, 'admin')
+        self.call(f'admin:modeldefault:{flash_id}:0')
+        with self.sessions() as session:
+            self.assertEqual(model_catalog.get_default_model(session), DEFAULT_MODEL)
+        default_id = self.model_id(DEFAULT_MODEL)
+        self.call(f'admin:modelaccess:{default_id}:admin:0')
+        with self.sessions() as session:
+            self.assertEqual(model_catalog.get_model(session, DEFAULT_MODEL).access, 'public')
+        self.client.models.list.return_value = [google_model(FLASH_MODEL), google_model(DEFAULT_MODEL)]
+        self.call('admin:modelrefresh')
+        with self.sessions() as session:
+            self.assertEqual(model_catalog.get_model(session, FLASH_MODEL).access, 'admin')
+        self.call('admin:models:0')
+        self.assertTrue(any('🛡' in button['text'] for button in self.buttons()))
+
+    def test_user_keyboard_hides_admin_models_except_for_admin(self):
+        models = [SimpleNamespace(id=index, name=access, display_name=access, access=access)
+                  for index, access in enumerate(('public', 'whitelist', 'admin', 'disabled'), 1)]
+        for is_admin, has_pro_access, expected_ids in (
+            (False, False, {1, 2}), (False, True, {1, 2}), (True, False, {1, 2, 3}),
+        ):
+            with self.subTest(is_admin=is_admin, has_pro_access=has_pro_access):
+                markup = get_model_selection_keyboard(
+                    models, has_pro_access=has_pro_access, is_admin=is_admin,
+                ).to_dict()
+                buttons = [button for row in markup['inline_keyboard'] for button in row]
+                self.assertEqual({int(button['callback_data'].removeprefix('model_id_'))
+                                  for button in buttons}, expected_ids)
+                whitelist = next(button for button in buttons if button['callback_data'] == 'model_id_2')
+                self.assertEqual('🔒' in whitelist['text'], not (is_admin or has_pro_access))
+                if is_admin:
+                    admin = next(button for button in buttons if button['callback_data'] == 'model_id_3')
+                    self.assertIn('🛡', admin['text'])
 
 
 if __name__ == '__main__':
