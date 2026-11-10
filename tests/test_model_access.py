@@ -242,8 +242,14 @@ class TestModelAccess(unittest.TestCase):
         self.message.voice = SimpleNamespace(file_id='voice-id', file_size=8, mime_type='audio/ogg')
         self.app.bot.get_file.return_value = SimpleNamespace(file_size=8, file_path='voice.oga')
         self.app.bot.download_file.return_value = b'OggS-test'
-        response = SimpleNamespace(text='Текстовый ответ', candidates=[], usage_metadata=types.GenerateContentResponseUsageMetadata(
-            prompt_token_count=40, candidates_token_count=5, total_token_count=45))
+        response = types.GenerateContentResponse(
+            candidates=[types.Candidate(content=types.Content(
+                role='model', parts=[types.Part(text='Текстовый ответ')],
+            ))],
+            usage_metadata=types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=40, candidates_token_count=5, total_token_count=45,
+            ),
+        )
         chat = MagicMock()
         chat.send_message.return_value = response
         chat.get_history.return_value = [

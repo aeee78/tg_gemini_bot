@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import case, func
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 from database.models import User, ChatSession, FileContext, MessageBuffer
 from database.model_catalog import get_default_model
@@ -12,9 +13,13 @@ def get_user(db: Session, user_id: int):
 
 
 def create_user(db: Session, user_id: int):
-    db_user = User(id=user_id, current_model=get_default_model(db))
-    db.add(db_user)
+    # First contact can overlap with an admin callback in another worker.
+    # Never replace an existing user's settings or access when that happens.
+    db.execute(insert(User).values(
+        id=user_id, current_model=get_default_model(db),
+    ).on_conflict_do_nothing(index_elements=["id"]))
     db.commit()
+    db_user = get_user(db, user_id)
     db.refresh(db_user)
     return db_user
 
@@ -29,14 +34,19 @@ def get_or_create_user(db: Session, user_id: int):
 def record_user_activity(db: Session, telegram_user):
     """Refresh Telegram profile and UTC activity; date only new registrations."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    user = get_user(db, telegram_user.id)
-    if user is None:
-        user = User(id=telegram_user.id, registered_at=now, current_model=get_default_model(db))
-        db.add(user)
-    for field in ("first_name", "last_name", "username", "language_code"):
-        setattr(user, field, getattr(telegram_user, field, None))
-    user.last_active_at = now
+    profile = {field: getattr(telegram_user, field, None)
+               for field in ("first_name", "last_name", "username", "language_code")}
+    statement = insert(User).values(
+        id=telegram_user.id, registered_at=now, current_model=get_default_model(db),
+        last_active_at=now, **profile,
+    )
+    # The conflict branch changes only profile/activity. In particular, it
+    # preserves registration dates (including unknown legacy dates) and rights.
+    db.execute(statement.on_conflict_do_update(
+        index_elements=["id"], set_={**profile, "last_active_at": now},
+    ))
     db.commit()
+    user = get_user(db, telegram_user.id)
     db.refresh(user)
     return user
 
@@ -97,16 +107,26 @@ def get_chat_session(db: Session, user_id: int):
     return db.query(ChatSession).filter(ChatSession.user_id == user_id).first()
 
 
-def save_chat_session(db: Session, user_id: int, history_json: str):
-    session = get_chat_session(db, user_id)
-    if not session:
-        session = ChatSession(user_id=user_id, history_json=history_json)
-        db.add(session)
-    else:
-        session.history_json = history_json
-    db.commit()
-    db.refresh(session)
-    return session
+def save_chat_session(
+    db: Session, user_id: int, history_json: str, *, clear_files=False, clear_buffer=False,
+):
+    """Persist a response and consume its pending context in one transaction."""
+    try:
+        session = get_chat_session(db, user_id)
+        if not session:
+            session = ChatSession(user_id=user_id, history_json=history_json)
+            db.add(session)
+        else:
+            session.history_json = history_json
+        if clear_files:
+            db.query(FileContext).filter(FileContext.user_id == user_id).delete()
+        if clear_buffer:
+            db.query(MessageBuffer).filter(MessageBuffer.user_id == user_id).delete()
+        db.commit()
+        return session
+    except Exception:
+        db.rollback()
+        raise
 
 
 def clear_chat_session(db: Session, user_id: int):
@@ -114,6 +134,19 @@ def clear_chat_session(db: Session, user_id: int):
     if session:
         db.delete(session)
         db.commit()
+
+
+def clear_user_context(db: Session, user_id: int, *, clear_history=False):
+    """Reset pending context and optional dialogue without partial deletions."""
+    try:
+        db.query(FileContext).filter(FileContext.user_id == user_id).delete()
+        db.query(MessageBuffer).filter(MessageBuffer.user_id == user_id).delete()
+        if clear_history:
+            db.query(ChatSession).filter(ChatSession.user_id == user_id).delete()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 # File Context Operations

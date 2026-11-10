@@ -3,7 +3,6 @@ import io
 import json
 import base64
 
-import requests
 import telebot
 from dotenv import load_dotenv
 from google import genai
@@ -37,7 +36,6 @@ from functools import wraps
 from threading import Lock, RLock
 
 from utils import (
-    BytesEncoder,
     markdown_to_text,
     send_rich_response,
 )
@@ -65,6 +63,37 @@ user_chats = {}  # Cache for active chat sessions
 user_last_responses = {}
 _user_operation_locks = {}
 _user_operation_registry_lock = Lock()
+
+
+class HistoryRestoreError(ValueError):
+    """Saved conversation cannot safely be restored without losing content."""
+
+
+class UserRequestError(ValueError):
+    """A local validation message that is safe to show to the user."""
+
+
+class ModelAccessError(PermissionError):
+    """A local model access failure that is safe to show to the user."""
+
+
+def request_error_message(error):
+    if isinstance(error, (HistoryRestoreError, UserRequestError, ModelAccessError)):
+        return str(error)
+    # Provider/network exceptions may contain credentials in request URLs.
+    print(f"Request failed: {type(error).__name__}")
+    return "Не удалось выполнить запрос. Попробуйте позже."
+
+
+def history_error(chat_id):
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(telebot.types.KeyboardButton("Новый чат"))
+    bot.send_message(
+        chat_id,
+        "Не удалось восстановить сохранённую историю. Она не изменена. "
+        "Для явного сброса нажмите «Новый чат».",
+        reply_markup=markup,
+    )
 
 
 def serialize_user_operation(func):
@@ -100,13 +129,34 @@ def generate_with_typing(chat_id, user_id, model_name, operation, api_call, *arg
         if not model_catalog.can_use_model(
             session, model_name, crud.has_pro_access(session, user_id), is_admin=user_id in ADMIN_IDS,
         ):
-            raise PermissionError("Доступ к модели изменился. Выберите доступную модель в меню.")
+            raise ModelAccessError("Доступ к модели изменился. Выберите доступную модель в меню.")
     chat = user_chats.get(user_id)
     if (operation in ('chat', 'photo', 'buffer') and is_image_generation_model(model_name)
             and chat is not None and contains_audio(chat.get_history(curated=True))):
-        raise ValueError("В истории есть голосовые. Выберите текстовую модель или начните новый чат; история и буфер сохранены.")
+        raise UserRequestError("В истории есть голосовые. Выберите текстовую модель или начните новый чат; история и буфер сохранены.")
     with typing_action(bot, chat_id):
-        return track_gemini_call(user_id, model_name, operation, api_call, *args, **kwargs)
+        response = track_gemini_call(user_id, model_name, operation, api_call, *args, **kwargs)
+    if operation in ('chat', 'photo', 'buffer', 'voice'):
+        candidates = getattr(response, 'candidates', None) or []
+        content = candidates[0].content if candidates else None
+        parts = getattr(content, 'parts', None) or []
+        # The SDK retains only candidate 0, and excludes turns containing an
+        # empty part from curated history. Such a response cannot consume input.
+        valid_turn = bool(parts and all(part != genai_types.Part() for part in parts))
+        text = getattr(response, 'text', None)
+        has_text = isinstance(text, str) and bool(text.strip())
+        has_image = is_image_generation_model(model_name) and any(
+            part.inline_data and part.inline_data.data
+            and (part.inline_data.mime_type or '').startswith('image/')
+            for part in parts
+            if not part.thought
+        )
+        if not valid_turn or not (has_text or has_image):
+            raise UserRequestError(
+                "Модель не вернула ответ. Ожидающие файлы и буфер сохранены; "
+                "попробуйте переформулировать запрос."
+            )
+    return response
 
 
 def deserialize_history(history_json):
@@ -115,33 +165,36 @@ def deserialize_history(history_json):
         return []
     try:
         data = json.loads(history_json)
+        if not isinstance(data, list):
+            raise ValueError("History must be a list")
         history = []
         for item in data:
+            if (not isinstance(item, dict) or item.get('role') not in ('user', 'model')
+                    or not isinstance(item.get('parts'), list)):
+                raise ValueError("Invalid saved content")
             parts = []
             for part_data in item.get("parts", []):
+                if not isinstance(part_data, dict):
+                    raise ValueError("Invalid saved part")
                 if "inline_data" in part_data and part_data["inline_data"]:
                     blob_data = part_data["inline_data"]
                     if "data" in blob_data and isinstance(
                         blob_data["data"], str
                     ):
                         try:
-                            blob_data["data"] = base64.b64decode(
-                                blob_data["data"]
-                            )
-                        except Exception:
-                            # Already bytes or invalid base64, leaving as is
-                            pass
+                            blob_data["data"] = base64.b64decode(blob_data["data"], validate=True)
+                        except Exception as error:
+                            raise ValueError("Invalid saved media") from error
                 signature = part_data.get("thought_signature")
                 if isinstance(signature, str):
-                    part_data["thought_signature"] = base64.b64decode(signature)
+                    part_data["thought_signature"] = base64.b64decode(signature, validate=True)
                 parts.append(genai_types.Part(**part_data))
             history.append(
                 genai_types.Content(role=item.get("role"), parts=parts)
             )
         return history
-    except Exception as e:
-        print(f"Error deserializing history: {e}")
-        return []
+    except Exception as error:
+        raise HistoryRestoreError("Не удалось восстановить сохранённую историю. Она не изменена.") from error
 
 
 def ensure_user_model(session, user):
@@ -175,34 +228,29 @@ def get_active_chat(user_id, model_name):
             history = deserialize_history(chat_session.history_json)
 
     # Never silently discard a saved conversation when restoration fails.
-    new_chat = client.chats.create(model=model_name, history=history)
+    try:
+        new_chat = client.chats.create(model=model_name, history=history)
+    except ValueError as error:
+        if history:
+            raise HistoryRestoreError("Не удалось восстановить сохранённую историю. Она не изменена.") from error
+        raise
     user_chats[user_id] = new_chat
     return new_chat
 
 
-def save_active_chat(user_id):
-    """Saves current chat history to DB."""
-    if user_id in user_chats:
+def save_active_chat(user_id, *, clear_files=False, clear_buffer=False):
+    """Save history and consume pending inputs together, or leave both intact."""
+    try:
         chat = user_chats[user_id]
-        try:
-            history_data = []
-            history_list = (
-                chat.get_history()
-                if hasattr(chat, "get_history")
-                else getattr(chat, "_curated_history", [])
+        history = chat.get_history(curated=True)
+        history_json = serialize_history(history)
+        with SessionLocal() as session:
+            crud.save_chat_session(
+                session, user_id, history_json, clear_files=clear_files, clear_buffer=clear_buffer,
             )
-            for content in history_list:
-                if hasattr(content, "model_dump"):
-                    history_data.append(content.model_dump())
-                else:
-                    pass
-
-            history_json = json.dumps(history_data, cls=BytesEncoder)
-
-            with SessionLocal() as session:
-                crud.save_chat_session(session, user_id, history_json)
-        except Exception as e:
-            print(f"Error saving chat history: {e}")
+    except Exception:
+        user_chats.pop(user_id, None)
+        raise
 
 
 def get_file_context_list(user_id):
@@ -286,8 +334,7 @@ def add_to_message_buffer(user_id, entry):
 
 def clear_user_context_db(user_id):
     with SessionLocal() as session:
-        crud.clear_file_contexts(session, user_id)
-        crud.clear_buffer(session, user_id)
+        crud.clear_user_context(session, user_id)
 
 
 def add_to_whitelist(user_id):
@@ -309,6 +356,9 @@ def ensure_user_started(func):
     @serialize_user_operation
     def wrapper(message, *args, **kwargs):
         if isinstance(message, telebot.types.CallbackQuery):
+            if message.message is None:
+                bot.answer_callback_query(message.id, text="Откройте личный чат с ботом.")
+                return None
             user_id = message.from_user.id
             chat_id = message.message.chat.id
             is_callback = True
@@ -340,7 +390,14 @@ def ensure_user_started(func):
                 return None
             user = crud.record_user_activity(session, message.from_user)
             previous_model = user.current_model
-            user = ensure_user_model(session, user)
+            try:
+                if func.__name__ != 'new_chat':
+                    user = ensure_user_model(session, user)
+            except HistoryRestoreError:
+                if is_callback:
+                    bot.answer_callback_query(message.id)
+                history_error(chat_id)
+                return None
             model_changed = user.current_model != previous_model
             current_model = user.current_model
             markup = get_main_keyboard(user.send_mode, user.search_enabled, current_model) if model_changed else None
@@ -358,10 +415,19 @@ def ensure_user_started(func):
 
 def download_telegram_image(file_id):
     """Загружает изображение из Telegram."""
-    file_info = bot.get_file(file_id)
-    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info.file_path}"
-    response = requests.get(file_url)
-    return io.BytesIO(response.content)
+    try:
+        file_info = bot.get_file(file_id)
+        limit = MAX_FILE_SIZE_MB * 1024 * 1024
+        if (file_info.file_size or 0) > limit:
+            raise ValueError("Image too large")
+        data = bot.download_file(file_info.file_path)
+        if not data or len(data) > limit:
+            raise ValueError("Invalid image size")
+        return io.BytesIO(data)
+    except Exception as error:
+        # Telegram download exceptions may contain the full URL with bot token.
+        print(f"Could not download photo: {type(error).__name__}")
+        raise UserRequestError(f"Не удалось загрузить фото. Максимум {MAX_FILE_SIZE_MB} МБ. Попробуйте ещё раз.") from None
 
 
 def send_text_as_file(chat_id, text, filename="response.txt"):
@@ -412,9 +478,9 @@ def send_gemini_response_with_images(
                                         reply_to_message_id=reply_to_message_id,
                                     )
                             except Exception as e:
-                                print(f"Ошибка отправки изображения: {e}")
+                                print(f"Could not deliver generated image: {type(e).__name__}")
                                 text_parts.append(
-                                    f"[Ошибка отправки изображения: {e}]"
+                                    "[Не удалось отправить изображение. Попробуйте ещё раз позже.]"
                                 )
 
     if not text_parts and hasattr(response, "text") and response.text:
@@ -482,23 +548,18 @@ def send_welcome(message):
     """Обрабатывает команду /start."""
     user_id = message.from_user.id
 
-    with SessionLocal() as session:
-        # Create user with defaults and normalize saved model settings.
-        user = ensure_user_model(
-            session, crud.record_user_activity(session, message.from_user)
-        )
-        current_model = user.current_model
-        send_mode = user.send_mode
-        search_enabled = user.search_enabled
-
-        # Clear buffers/files on start
-        crud.clear_file_contexts(session, user_id)
-        crud.clear_buffer(session, user_id)
-
-    # Initialize chat session
-    get_active_chat(user_id, current_model)
-
-    user_last_responses[user_id] = None
+    try:
+        with SessionLocal() as session:
+            user = ensure_user_model(
+                session, crud.record_user_activity(session, message.from_user)
+            )
+            current_model = user.current_model
+            send_mode = user.send_mode
+            search_enabled = user.search_enabled
+        get_active_chat(user_id, current_model)
+    except HistoryRestoreError:
+        history_error(message.chat.id)
+        return
 
     search_status_text = "Вкл ✅" if search_enabled else "Выкл ❌"
 
@@ -528,22 +589,22 @@ def new_chat(message):
 
     with SessionLocal() as session:
         user = crud.get_or_create_user(session, user_id)
-        current_model = user.current_model
+        current_model = model_catalog.resolve_model(
+            session, user.current_model, user.pro_access, is_admin=user_id in ADMIN_IDS,
+        )
         send_mode = user.send_mode
         search_enabled = user.search_enabled
 
-        # Clear history in DB
-        crud.clear_chat_session(session, user_id)
-        # Clear contexts
-        crud.clear_file_contexts(session, user_id)
-        crud.clear_buffer(session, user_id)
-
-    # Clear memory cache
-    if user_id in user_chats:
-        del user_chats[user_id]
-
-    # Start new
-    get_active_chat(user_id, current_model)
+        # Prepare first; a local SDK failure must not erase the stored dialogue.
+        try:
+            replacement = client.chats.create(model=current_model, history=[])
+            user.current_model = current_model
+            crud.clear_user_context(session, user_id, clear_history=True)
+        except Exception as error:
+            print(f"Could not reset chat: {type(error).__name__}")
+            bot.reply_to(message, "Не удалось начать новый чат. Прежняя история и вложения сохранены.")
+            return
+    user_chats[user_id] = replacement
 
     user_last_responses[user_id] = None
 
@@ -569,6 +630,9 @@ def get_response_as_md(message):
     """Обрабатывает нажатие кнопки "Получить .md 📄"."""
     user_id = message.from_user.id
     chat_id = message.chat.id
+    if chat_id != user_id:
+        bot.reply_to(message, "Скачивание ответов доступно в личном чате с ботом.")
+        return
 
     if user_last_responses.get(user_id):
         raw_response = user_last_responses[user_id]
@@ -633,12 +697,7 @@ def handle_send_mode(message):
         search_enabled = updated_user.search_enabled
         current_model = updated_user.current_model
 
-        # Clear buffer if switching to manual? No, keep it.
-        # Clear buffer if switching to immediate? Maybe send existing?
-        # Logic says: switching mode just switches future behavior.
-        # If switching from manual to immediate, buffer remains until manually cleared or sent.
-        # But 'user_message_buffer[user_id] = []' was in original code.
-        crud.clear_buffer(session, user_id)
+        pending_count = len(crud.get_buffer(session, user_id))
 
     mode_message = f"Режим отправки изменен на: *{new_mode}*\n\n"
     if new_mode == SEND_MODE_MANUAL:
@@ -647,6 +706,8 @@ def handle_send_mode(message):
         mode_message += (
             "Теперь каждое ваше сообщение будет сразу отправляться в Gemini."
         )
+        if pending_count:
+            mode_message += f"\nБуфер ({pending_count} шт.) сохранён. Для отправки вернитесь в ручной режим."
 
     bot.send_message(
         chat_id,
@@ -763,7 +824,13 @@ def handle_send_all(message):
         )
         return
 
-    buffered_items = get_message_buffer_list(user_id)
+    try:
+        buffered_items = get_message_buffer_list(user_id)
+        files_in_context = get_file_context_list(user_id)
+    except Exception as error:
+        print(f"Could not load pending context: {type(error).__name__}")
+        bot.reply_to(message, "Не удалось прочитать буфер. Данные сохранены; попробуйте позже.")
+        return
 
     if not buffered_items:
         bot.reply_to(
@@ -781,9 +848,25 @@ def handle_send_all(message):
         return
 
     # Load/Ensure chat exists
-    chat_session = get_active_chat(user_id, current_model)
-
-    combined_parts = []
+    try:
+        chat_session = get_active_chat(user_id, current_model)
+        # Older versions stored manual documents twice. Send them only once.
+        buffered_documents = {
+            (item['filename'], item['mime_type'], item['data'], item.get('caption') or '')
+            for item in buffered_items if item['type'] == 'document'
+        }
+        pending_files = [item for item in files_in_context if
+                         (item['filename'], item['mime_type'], item['data'], item.get('caption') or '')
+                         not in buffered_documents]
+        pending = context_contents([], pending_files, [])
+        combined_parts = list(pending[0].parts) if pending else []
+    except HistoryRestoreError:
+        history_error(chat_id)
+        return
+    except Exception as error:
+        print(f"Could not prepare pending context: {type(error).__name__}")
+        bot.reply_to(message, "Не удалось подготовить вложения. Буфер и файлы сохранены.")
+        return
     current_text_block = ""
 
     for item in buffered_items:
@@ -822,12 +905,12 @@ def handle_send_all(message):
 
                 combined_parts.append(f"(Файл: {item['filename']})")
             except Exception as file_err:
+                print(f"Could not prepare buffered file: {type(file_err).__name__}")
                 bot.send_message(
                     chat_id,
-                    f"⚠️ Не удалось добавить файл '{item['filename']}' из буфера в запрос: {file_err}",
+                    f"⚠️ Не удалось добавить файл '{item['filename']}' в запрос. Буфер сохранён.",
                 )
-
-                continue
+                return
 
     if current_text_block:
         combined_parts.append(current_text_block)
@@ -840,13 +923,13 @@ def handle_send_all(message):
                 current_mode, search_enabled, current_model
             ),
         )
-        clear_user_context_db(user_id)
         return
 
     status_msg = bot.reply_to(
         message, "Отправляю накопленные сообщения и вложения в Gemini..."
     )
 
+    history_saved = False
     try:
         if is_image_generation_model(current_model):
             gemini_config = GenerateContentConfig(
@@ -867,7 +950,8 @@ def handle_send_all(message):
             user_id, current_model, "buffer", chat_session.send_message,
             message=combined_parts, config=gemini_config
         )
-        save_active_chat(user_id)  # Save history
+        save_active_chat(user_id, clear_files=bool(files_in_context), clear_buffer=True)
+        history_saved = True
 
         if is_image_generation_model(current_model):
             raw_response_text = send_gemini_response_with_images(
@@ -906,10 +990,6 @@ def handle_send_all(message):
         except (AttributeError, IndexError) as e:
             print(f"Не удалось извлечь источники: {e}")
 
-        # Clear buffer after successful send
-        with SessionLocal() as session:
-            crud.clear_buffer(session, user_id)
-
         user_last_responses[user_id] = raw_response_text
 
         try:
@@ -933,8 +1013,9 @@ def handle_send_all(message):
             pass
         bot.reply_to(
             message,
-            f"Произошла ошибка при отправке: {e!s}\n\n"
-            "Ваши сообщения и фото сохранены в буфере. Попробуйте позже или измените содержимое буфера.",
+            f"{request_error_message(e)}\n\n"
+            + ("Запрос уже обработан и сохранён в истории. Повторная отправка буфера не нужна."
+               if history_saved else "Ваши сообщения и вложения сохранены. Попробуйте позже."),
             reply_markup=get_main_keyboard(
                 current_mode, search_enabled, current_model
             ),
@@ -943,15 +1024,25 @@ def handle_send_all(message):
 
 @bot.callback_query_handler(
     func=lambda call: (
-        call.data.startswith("get_file_") or call.data.startswith("get_md_")
+        bool(call.data) and (call.data.startswith("get_file_") or call.data.startswith("get_md_"))
     )
 )
 @ensure_user_started
 def handle_get_file(call):
     """Обрабатывает нажатие инлайн кнопок "Получить в виде файла" (.txt или .md)."""
 
-    user_id = int(call.data.split("_")[2])
-    file_format = "txt" if call.data.startswith("get_file_") else "md"
+    data = call.data or ''
+    prefix = 'get_file_' if data.startswith('get_file_') else 'get_md_'
+    identifier = data.removeprefix(prefix)
+    actor_id = call.from_user.id
+    chat = getattr(getattr(call, 'message', None), 'chat', None)
+    if (not data.startswith(prefix) or not identifier.isascii() or not identifier.isdecimal()
+            or len(identifier) > 19 or int(identifier) >= 2**63
+            or int(identifier) != actor_id or getattr(chat, 'id', None) != actor_id):
+        bot.answer_callback_query(call.id, text="Скачивать можно только свои ответы в личном чате с ботом.")
+        return
+    user_id = actor_id
+    file_format = "txt" if prefix == 'get_file_' else "md"
 
     if user_last_responses.get(user_id):
         raw_response = user_last_responses[user_id]
@@ -986,7 +1077,7 @@ def handle_get_file(call):
         )
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("model_"))
+@bot.callback_query_handler(func=lambda call: bool(call.data and call.data.startswith("model_")))
 @ensure_user_started
 def handle_model_selection(call):
     """Обрабатывает нажатия кнопок выбора модели."""
@@ -1087,7 +1178,7 @@ def handle_document(message):
             bot.send_chat_action(chat_id, "upload_document")
             file_info = bot.get_file(message.document.file_id)
 
-            if file_info.file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
+            if (file_info.file_size or 0) > MAX_FILE_SIZE_MB * 1024 * 1024:
                 bot.reply_to(
                     message,
                     f"❌ Файл '{message.document.file_name}' слишком большой "
@@ -1099,6 +1190,8 @@ def handle_document(message):
                 return
 
             downloaded_file = bot.download_file(file_info.file_path)
+            if not downloaded_file or len(downloaded_file) > MAX_FILE_SIZE_MB * 1024 * 1024:
+                raise UserRequestError(f"Не удалось прочитать документ. Максимум {MAX_FILE_SIZE_MB} МБ.")
             pdf_bytes = downloaded_file
             filename = message.document.file_name
             caption = message.caption or ""
@@ -1110,15 +1203,7 @@ def handle_document(message):
                 "caption": caption,
             }
 
-            # Save to DB (File Context)
-            add_file_context_entry(user_id, file_data)
-
-            # Get count from DB
-            with SessionLocal() as session:
-                context_count = len(crud.get_file_contexts(session, user_id))
-
             if current_mode == SEND_MODE_MANUAL:
-                # Add to buffer as well
                 add_to_message_buffer(
                     user_id, {**file_data, "type": "document"}
                 )
@@ -1131,13 +1216,15 @@ def handle_document(message):
                     message,
                     f"📄 Файл '{filename}' ({file_type_short}) добавлен в буфер ({buffer_count} шт.). "
                     + ("Подпись также добавлена.\n" if caption else "\n")
-                    + f"Всего файлов в контексте: {context_count}.\n"
                     + "Нажмите 'Отправить всё', когда будете готовы.",
                     reply_markup=get_main_keyboard(
                         current_mode, search_enabled, current_model
                     ),
                 )
             else:
+                add_file_context_entry(user_id, file_data)
+                with SessionLocal() as session:
+                    context_count = len(crud.get_file_contexts(session, user_id))
                 file_type_short = doc_mime_type.split("/")[-1].upper()
                 bot.reply_to(
                     message,
@@ -1151,7 +1238,7 @@ def handle_document(message):
         except Exception as e:
             bot.reply_to(
                 message,
-                f"Не удалось обработать файл '{message.document.file_name}': {e!s}",
+                f"Не удалось обработать файл '{message.document.file_name}'. {request_error_message(e)}",
                 reply_markup=get_main_keyboard(
                     current_mode, search_enabled, current_model
                 ),
@@ -1233,10 +1320,7 @@ def handle_voice(message):
                 response_modalities=["TEXT"], system_instruction=VOICE_INSTRUCTION, tools=tools,
             ),
         )
-        save_active_chat(user_id)
-        if files:
-            with SessionLocal() as session:
-                crud.clear_file_contexts(session, user_id)
+        save_active_chat(user_id, clear_files=bool(files))
         text = response.text
         if not text:
             bot.reply_to(message, "Модель не вернула текстовый ответ. Попробуйте переформулировать голосовое.")
@@ -1289,20 +1373,21 @@ def handle_photo(message):
         except Exception as e:
             bot.reply_to(
                 message,
-                f"Не удалось добавить фото в буфер: {e!s}",
+                f"Не удалось добавить фото в буфер. {request_error_message(e)}",
                 reply_markup=get_main_keyboard(
                     current_mode, search_enabled, current_model
                 ),
             )
         return
 
-    chat_session = get_active_chat(user_id, current_model)
-
     try:
+        chat_session = get_active_chat(user_id, current_model)
         image_stream = download_telegram_image(file_id)
         img = Image.open(image_stream)
 
-        api_message_parts = []
+        files = get_file_context_list(user_id)
+        pending = context_contents([], files, [])
+        api_message_parts = list(pending[0].parts) if pending else []
 
         if caption:
             api_message_parts.append(caption)
@@ -1323,7 +1408,7 @@ def handle_photo(message):
                 user_id, current_model, "photo", chat_session.send_message,
                 message=api_message_parts,
             )
-        save_active_chat(user_id)  # Save
+        save_active_chat(user_id, clear_files=bool(files))
 
         if is_image_generation_model(current_model):
             raw_response_text = send_gemini_response_with_images(
@@ -1346,7 +1431,7 @@ def handle_photo(message):
     except Exception as e:
         bot.reply_to(
             message,
-            f"Произошла ошибка при обработке изображения ({current_model}): {e!s}\n\n"
+            f"Не удалось обработать изображение ({current_model}). {request_error_message(e)}\n\n"
             "Возможно, стоит попробовать новый чат.",
             reply_markup=get_main_keyboard(
                 current_mode, search_enabled, current_model
@@ -1462,10 +1547,10 @@ def handle_quick_tool_command(message):
             bot.delete_message(chat_id, status_msg.message_id)
         except Exception:
             pass
-        print(f"Error in quick tool command '{command}': {e}")
+        print(f"Error in quick tool command '{command}': {type(e).__name__}")
         bot.reply_to(
             message,
-            f"Произошла ошибка при выполнении команды `{command_with_slash}`: {e!s}",
+            f"Не удалось выполнить команду {command_with_slash}. {request_error_message(e)}",
         )
 
 
@@ -1521,10 +1606,12 @@ def handle_message(message):
                         f"(Файл: {file_info['filename']})"
                     )
                 except Exception as file_err:
+                    print(f"Could not prepare pending file: {type(file_err).__name__}")
                     bot.send_message(
                         chat_id,
-                        f"⚠️ Не удалось добавить файл '{file_info['filename']}' в запрос: {file_err}",
+                        f"⚠️ Не удалось добавить файл '{file_info['filename']}' в запрос. Вложения сохранены.",
                     )
+                    return
 
         api_message_parts.append(message.text)
 
@@ -1546,12 +1633,7 @@ def handle_message(message):
             user_id, current_model, "chat", chat_session.send_message,
             message=api_message_parts, config=gemini_config
         )
-        save_active_chat(user_id)  # Save history
-
-        # Clear file contexts after successful immediate-mode send
-        if files_in_context:
-            with SessionLocal() as session:
-                crud.clear_file_contexts(session, user_id)
+        save_active_chat(user_id, clear_files=bool(files_in_context))
         if is_image_generation_model(current_model):
             raw_response_text = send_gemini_response_with_images(
                 message.chat.id,
@@ -1604,7 +1686,7 @@ def handle_message(message):
     except Exception as e:
         bot.reply_to(
             message,
-            f"Произошла ошибка: {e!s}\n\nВозможно стоит "
+            f"{request_error_message(e)}\n\nВозможно стоит "
             f"попробовать другую модель или начать новый чат.",
             reply_markup=get_main_keyboard(
                 current_mode, search_enabled, current_model

@@ -3,10 +3,41 @@ name: Deploy to Server
 on:
   push:
     branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Avoid overlapping rsync, dependency updates, migrations and service restarts.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install locked dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+  deploy:
+    needs: tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       TARGET_SERVER_IP: ${{ secrets.SERVER_IP }}
       TARGET_SERVER_SSH_PORT_FROM_SECRET: ${{ secrets.SERVER_SSH_PORT }}
@@ -61,6 +92,8 @@ jobs:
             --exclude '.env' \
             --exclude '.git/' \
             --exclude '.github/' \
+            --exclude '__pycache__/' \
+            --exclude '.pytest_cache/' \
             --exclude 'whitelist.txt' \
             --exclude 'bot.db*' \
             -e "ssh -p \"$EFFECTIVE_SSH_PORT\" -o StrictHostKeyChecking=no" . root@$TARGET_SERVER_IP:/home/tg_gemini_bot/
@@ -141,10 +174,7 @@ jobs:
             echo "--- Activating virtual environment ---"
             source .venv/bin/activate
 
-            echo "--- Compiling requirements.in to get latest package versions ---"
-            uv pip compile --upgrade requirements.in -o requirements.txt
-
-            echo "--- Syncing Python dependencies from newly generated requirements.txt ---"
+            echo "--- Syncing tested dependencies from committed requirements.txt ---"
             uv pip sync requirements.txt
 
             echo "--- Migrating database and importing legacy whitelist ---"

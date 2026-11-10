@@ -159,13 +159,15 @@
 Проект настроен на автоматическое развертывание на сервер (Debian/Ubuntu-based) с помощью GitHub Actions при каждом пуше в ветку `main`.
 
 -   **Workflow (`.github/workflows/deploy.yml`):**
-    1.  Копирует файлы проекта (исключая `venv`, `.env`, `.git`, `.github`, `whitelist.txt`) на сервер через `rsync`.
-    2.  На сервере:
+    1.  Запускает тесты на Python 3.13 с зависимостями из закоммиченного `requirements.txt`; ошибка блокирует выкладку. Для pull request выполняются только проверки.
+    2.  Создаёт резервную копию кода и SQLite в `/home/tg_gemini_bot_backups` и копирует файлы через `rsync`, сохраняя `.env`, `bot.db*`, whitelist и виртуальные окружения.
+    3.  На сервере:
         *   Устанавливает системные зависимости (например, `rsync`, `python3.13-venv`, `curl`).
         *   Устанавливает/обновляет `uv` (быстрый менеджер пакетов Python).
         *   Создает виртуальное окружение `.venv` с помощью `uv` и Python 3.13.
-        *   Устанавливает зависимости из `requirements.txt` с помощью `uv pip install`.
+        *   Синхронизирует проверенные версии из `requirements.txt` через `uv pip sync`; обновление версий выполняется отдельно от деплоя.
         *   Перезапускает сервис `systemd` (например, `tg_gemini_bot.service`), который должен быть предварительно настроен на сервере для запуска бота.
+        *   Проверяет активность сервиса и чтение каталога моделей. Выкладки из `main` выполняются последовательно.
 
 -   **Необходимые секреты GitHub Actions:** `SERVER_SSH_KEY` (приватный SSH ключ), `SERVER_IP` (IP адрес сервера) и SERVER_SSH_PORT (опционально): SSH порт вашего сервера, если он отличается от стандартного порта 22. Если этот секрет не указан или пуст, будет использован порт 22.
 
@@ -339,13 +341,15 @@ These commands perform one-off tasks and do not affect your main chat context. T
 The project is configured for automatic deployment to a server (Debian/Ubuntu-based) using GitHub Actions on every push to the `main` branch.
 
 -   **Workflow (`.github/workflows/deploy.yml`):**
-    1.  Copies project files (excluding `venv`, `.env`, `.git`, `.github`, `whitelist.txt`) to the server via `rsync`.
-    2.  On the server:
+    1.  Runs tests on Python 3.13 with the committed `requirements.txt`; failures block deployment. Pull requests run validation only.
+    2.  Backs up code and SQLite to `/home/tg_gemini_bot_backups`, then copies files via `rsync`, preserving `.env`, `bot.db*`, the whitelist and virtual environments.
+    3.  On the server:
         *   Installs system dependencies (e.g., `rsync`, `python3.13-venv`, `curl`).
         *   Installs/updates `uv` (a fast Python package manager).
         *   Creates a `.venv` virtual environment using `uv` and Python 3.13.
-        *   Installs dependencies from `requirements.txt` using `uv pip install`.
+        *   Syncs the tested versions from `requirements.txt` using `uv pip sync`; dependency upgrades happen separately from deployment.
         *   Restarts the `systemd` service (e.g., `tg_gemini_bot.service`), which must be pre-configured on the server to run the bot.
+        *   Checks service readiness and the model catalog. Deployments from `main` run sequentially.
 
 -   **Required GitHub Actions Secrets:** `SERVER_SSH_KEY` (private SSH key), `SERVER_IP` (server IP address) and SERVER_SSH_PORT (optional): The SSH port of your server if it differs from the default port 22. If this secret is not provided or is empty, port 22 will be used.
 
@@ -461,6 +465,18 @@ whitelist. Отключённые модели недоступны всем, в
 вызов, а режимы whitelist и «Только админ» требуют соответствующего доступа.
 
 ### Контекст и смена модели
+
+`/start` и смена режима отправки сохраняют ожидающие файлы, буфер и последний
+ответ. Вложения удаляются из ожидающих только вместе с успешной записью
+переписки в базу. Пустой/заблокированный ответ модели и ошибка записи оставляют
+ожидающие данные на месте. Документ в ручном режиме хранится только в буфере,
+а подготовленные раньше документы также передаются при отправке фото и буфера.
+После успешной отправки вложения остаются в сохранённой истории диалога.
+
+Повреждённая история не заменяется пустой автоматически: бот предлагает
+явный сброс кнопкой «Новый чат». Сброс истории, файлов и буфера выполняется
+одной транзакцией. Скачивание ответов разрешено только владельцу в личном
+чате с ботом; ошибки сетевых клиентов не выводятся пользователю с URL и ключами.
 
 Смена модели сохраняет текстовую историю, изображения, ожидающие файлы, буфер
 и последний ответ для скачивания. Модель и перенесённая история сохраняются

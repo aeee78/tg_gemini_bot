@@ -19,8 +19,14 @@ class BytesEncoder(json.JSONEncoder):
 
 def markdown_to_text(markdown_string):
     """Converts a markdown string to plaintext"""
-    html = markdown(markdown_string)
+    html = markdown(markdown_string, extensions=["fenced_code", "tables"])
     soup = BeautifulSoup(html, "html.parser")
+
+    # Keep citations usable in fallback messages and plain-text downloads.
+    for link in soup.find_all("a", href=True):
+        label = link.get_text()
+        destination = link["href"]
+        link.replace_with(label if label == destination else f"{label} ({destination})")
 
     # Replace <br> tags with explicit newlines
     for br in soup.find_all("br"):
@@ -54,7 +60,8 @@ def markdown_to_text(markdown_string):
 
     text = soup.get_text(separator="")
 
-    return text.strip()
+    # Stripping spaces would remove indentation from a leading fenced code block.
+    return text.strip("\n")
 
 
 def parse_markdown_state(text: str) -> dict:
@@ -241,6 +248,35 @@ def split_long_message(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[
     return parts
 
 
+def split_plain_text(text: str, max_length: int = 4000) -> list[str]:
+    """Split literal text without changing it, respecting Telegram's UTF-16 budget."""
+    if max_length < 1:
+        raise ValueError("max_length must be positive")
+    parts = []
+    start = 0
+    while start < len(text):
+        end = start
+        units = 0
+        while end < len(text):
+            width = 2 if ord(text[end]) > 0xFFFF else 1
+            if units + width > max_length:
+                break
+            units += width
+            end += 1
+        if end == start:
+            raise ValueError("max_length is too small for a Unicode character")
+        if end < len(text):
+            candidate = text[start:end]
+            for delimiter in ("\n\n", "\n", " "):
+                position = candidate.rfind(delimiter)
+                if position >= len(candidate) // 4:
+                    end = start + position + len(delimiter)
+                    break
+        parts.append(text[start:end])
+        start = end
+    return parts
+
+
 def send_rich_response(
     bot,
     chat_id,
@@ -284,7 +320,7 @@ def send_rich_response(
         except Exception:
             # Fallback: конвертируем в простой текст и делим на части по 4000 символов
             plain_part = markdown_to_text(part)
-            fallback_chunks = split_long_message(plain_part, max_length=4000)
+            fallback_chunks = split_plain_text(plain_part, max_length=4000)
             for j, chunk in enumerate(fallback_chunks):
                 chunk_reply_params = (
                     reply_params if (is_first and j == 0) else None
