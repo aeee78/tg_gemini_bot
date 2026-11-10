@@ -7,12 +7,18 @@ from telebot.apihelper import ApiTelegramException
 
 from constants import get_model_alias
 from database import crud
+from database import model_catalog
 from database import usage as usage_queries
 
 ADMIN_IDS = frozenset({66765326})
 PAGE_SIZE = 8
 USAGE_PAGE_SIZE = 5
 DISPLAY_TIMEZONE = ZoneInfo('Europe/Moscow')
+MODEL_ACCESS_LABELS = {
+    'public': '🌐 Доступна всем',
+    'whitelist': '🔑 Только whitelist',
+    'disabled': '🚫 Отключена',
+}
 
 
 def format_date(value):
@@ -64,9 +70,10 @@ def usage_lines(data, compact=False):
 
 
 class AdminPanel:
-    def __init__(self, bot, session_factory):
+    def __init__(self, bot, session_factory, model_client=None):
         self.bot = bot
         self.sessions = session_factory
+        self.model_client = model_client
 
     def allowed(self, actor, chat):
         return (actor is not None and actor.id in ADMIN_IDS
@@ -89,10 +96,105 @@ class AdminPanel:
         self.show(message, 'Админка\nВыбери раздел:', keyboard(
             [('👥 Пользователи', 'admin:users:all:0')],
             [('🔑 Белый список', 'admin:users:pro:0')],
+            [('🤖 Модели', 'admin:models:0')],
             [('🔎 Найти пользователя', 'admin:search')],
             [('📊 Статистика', 'admin:stats')],
             [('📈 Расход', 'admin:usage:today:sum:0:0')],
         ), edit)
+
+    def models(self, message, page=0, notice=None):
+        with self.sessions() as session:
+            models = model_catalog.list_models(session)
+            default = model_catalog.get_default_model(session)
+            last_sync = model_catalog.get_last_sync(session)
+            pages = max(1, (len(models) + PAGE_SIZE - 1) // PAGE_SIZE)
+            page = min(page, pages - 1)
+            rows = []
+            for model in models[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]:
+                status = {'public': '🌐', 'whitelist': '🔑', 'disabled': '🚫'}[model.access]
+                marker = '⭐ ' if model.name == default else ''
+                missing = ' ⚠️' if not model.available else ''
+                label = f'{marker}{status} {model.display_name or model.name}{missing}'[:64]
+                rows.append([(label, f'admin:model:{model.id}:{page}')])
+        navigation = []
+        if page:
+            navigation.append(('←', f'admin:models:{page - 1}'))
+        if page + 1 < pages:
+            navigation.append(('→', f'admin:models:{page + 1}'))
+        if navigation:
+            rows.append(navigation)
+        rows.extend([
+            [('🔄 Обновить список Google', 'admin:modelrefresh')],
+            [('В меню', 'admin:home')],
+        ])
+        lines = [
+            f'🤖 Модели: {len(models)}', f'Страница {page + 1} из {pages}',
+            f'По умолчанию: {default}',
+            f'Каталог обновлён: {format_date(last_sync)} (Москва)',
+            '', '🌐 Всем · 🔑 Whitelist · 🚫 Отключена · ⭐ По умолчанию',
+            '⚠️ Нет в последнем каталоге Google; настройка доступа сохранена.',
+            'Новые модели отключены, пока ты их не включишь.',
+            'Наличие в каталоге не гарантирует доступ по тарифу и квотам ключа.',
+        ]
+        if notice:
+            lines.extend(['', notice])
+        self.show(message, '\n'.join(lines), keyboard(*rows), edit=True)
+
+    def model_card(self, message, model_id, page=0, notice=None):
+        with self.sessions() as session:
+            model = model_catalog.get_model_by_id(session, model_id)
+            back = [('← К моделям', f'admin:models:{page}')]
+            if model is None:
+                self.show(message, 'Модель не найдена. Обнови список моделей.', keyboard(back), edit=True)
+                return
+            is_default = model.name == model_catalog.get_default_model(session)
+            lines = [
+                (model.display_name or model.name)[:200], model.name[:300],
+                f'Доступ: {MODEL_ACCESS_LABELS[model.access]}',
+                f'По умолчанию: {"да ⭐" if is_default else "нет"}',
+            ]
+            if not model.available:
+                lines.extend(['', '⚠️ Нет в последнем каталоге Google. Доступ сохранён; '
+                              'модель может быть снята с обслуживания.'])
+            rows = [[(label, f'admin:modelaccess:{model.id}:{access}:{page}')]
+                    for access, label in MODEL_ACCESS_LABELS.items()]
+            if not is_default:
+                rows.append([('⭐ Сделать по умолчанию', f'admin:modeldefault:{model.id}:{page}')])
+            rows.append(back)
+            lines.extend(['', 'Настройки применяются без перезапуска.',
+                          'По умолчанию можно выбрать только модель, доступную всем.'])
+        if notice:
+            lines.extend(['', notice])
+        self.show(message, '\n'.join(lines), keyboard(*rows), edit=True)
+
+    def refresh_models(self, message):
+        if self.model_client is None:
+            self.models(message, notice='Обновление каталога сейчас недоступно. Попробуй позже.')
+            return
+        try:
+            # Fetch every page before beginning a write transaction.
+            models = list(self.model_client.models.list())
+            with self.sessions() as session:
+                result = model_catalog.sync_catalog(session, models)
+        except Exception:
+            # Provider exceptions can include request URLs and credentials.
+            self.models(message, notice='Не удалось обновить каталог Google. '
+                        'Настройки и предыдущий каталог сохранены. Попробуй позже.')
+            return
+        self.models(message, notice=f'Каталог обновлён. Новых моделей: {result["added"]}; '
+                    f'нет в каталоге: {result["missing"]}.')
+
+    def change_model(self, message, model_id, page, access=None):
+        try:
+            with self.sessions() as session:
+                if access is None:
+                    model_catalog.set_default_model(session, model_id)
+                else:
+                    model_catalog.set_model_access(session, model_id, access)
+        except ValueError as error:
+            self.model_card(message, model_id, page, notice=str(error))
+            return
+        self.model_card(message, model_id, page, notice='Настройка сохранена.')
 
     def users(self, message, scope='all', page=0, edit=True):
         with self.sessions() as session:
@@ -251,6 +353,24 @@ class AdminPanel:
                       keyboard([('В меню', 'admin:home')]), edit=True)
         elif parts == ['admin', 'stats']:
             self.stats(call.message)
+        elif parts == ['admin', 'modelrefresh']:
+            self.refresh_models(call.message)
+        elif (action == 'models' and len(parts) == 3
+              and parts[2].isascii() and parts[2].isdecimal() and len(parts[2]) <= 9):
+            self.models(call.message, int(parts[2]))
+        elif (action in ('model', 'modeldefault') and len(parts) == 4
+              and parts[2].isascii() and parts[2].isdecimal() and len(parts[2]) <= 19
+              and int(parts[2]) < 2**63
+              and parts[3].isascii() and parts[3].isdecimal() and len(parts[3]) <= 9):
+            if action == 'model':
+                self.model_card(call.message, int(parts[2]), int(parts[3]))
+            else:
+                self.change_model(call.message, int(parts[2]), int(parts[3]))
+        elif (action == 'modelaccess' and len(parts) == 5
+              and parts[2].isascii() and parts[2].isdecimal() and len(parts[2]) <= 19
+              and int(parts[2]) < 2**63 and parts[3] in MODEL_ACCESS_LABELS
+              and parts[4].isascii() and parts[4].isdecimal() and len(parts[4]) <= 9):
+            self.change_model(call.message, int(parts[2]), int(parts[4]), access=parts[3])
         elif (action == 'usage' and len(parts) == 6
               and parts[2] in ('today', 'week', 'month', 'all')
               and parts[3] in ('sum', 'models', 'users')
@@ -279,8 +399,8 @@ class AdminPanel:
                       keyboard([('В меню', 'admin:home')]), edit=True)
 
 
-def register_admin_handlers(bot, session_factory):
-    panel = AdminPanel(bot, session_factory)
+def register_admin_handlers(bot, session_factory, model_client=None):
+    panel = AdminPanel(bot, session_factory, model_client=model_client)
     bot.register_message_handler(panel.command, commands=['admin'])
     bot.register_callback_query_handler(panel.callback, func=lambda call: bool(call.data and call.data.startswith('admin:')))
     return panel

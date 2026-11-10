@@ -101,3 +101,24 @@ class UsageRecord(Base):
     cached_tokens = Column(BigInteger, nullable=True)
     tool_tokens = Column(BigInteger, nullable=True)
     total_tokens = Column(BigInteger, nullable=True)
+
+
+class ModelConfig(Base):
+    """Google catalog metadata and the independently managed bot access policy."""
+    __tablename__ = "model_configs"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    display_name = Column(String, nullable=False)
+    access = Column(String, nullable=False, default="disabled")
+    # Presence in the latest catalog is informational, not an access grant.
+    available = Column(Boolean, nullable=False, default=True)
+    supports_images = Column(Boolean, nullable=False, default=False)
+
+
+class ModelCatalogSettings(Base):
+    __tablename__ = "model_catalog_settings"
+
+    id = Column(Integer, primary_key=True)
+    default_model = Column(String, nullable=False)
+    last_synced_at = Column(DateTime, nullable=True)

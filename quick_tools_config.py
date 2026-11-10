@@ -9,8 +9,6 @@ QUICK_TOOLS_CONFIG = {
             "Provide *only* the translated text, without any introduction, comments, or explanations."
         ),
         "description": "ru<>en Перевод текста",
-        "model": "gemini-3.5-flash-lite",
-        "thinking_budget": 0,
     },
     "prompt": {
         "system_instruction": (
@@ -99,7 +97,6 @@ QUICK_TOOLS_CONFIG = {
             "Otherwise, return *only* the formatted list."
         ),
         "description": "📋 Преобразовать текст в маркированный или нумерованный список",
-        "thinking_budget": 0,
     },
     "table": {
         "system_instruction": (
@@ -128,7 +125,6 @@ QUICK_TOOLS_CONFIG = {
             "table, return the exact phrase: `Этот текст не подходит для представления в виде списка задач.` "
         ),
         "description": "☑️ Создать список задач (todo list) из текста",
-        "thinking_budget": 0,
     },
     "markdown": {
         "system_instruction": (
@@ -142,7 +138,6 @@ QUICK_TOOLS_CONFIG = {
             "Return the formatted text."
         ),
         "description": "#️⃣ Добавить базовое Markdown форматирование",
-        "thinking_budget": 0,
     },
     "dayplanner": {
         "system_instruction": (

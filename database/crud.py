@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 from database.models import User, ChatSession, FileContext, MessageBuffer
+from database.model_catalog import get_default_model
 
 
 # User Operations
@@ -11,7 +12,7 @@ def get_user(db: Session, user_id: int):
 
 
 def create_user(db: Session, user_id: int):
-    db_user = User(id=user_id)
+    db_user = User(id=user_id, current_model=get_default_model(db))
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -30,7 +31,7 @@ def record_user_activity(db: Session, telegram_user):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     user = get_user(db, telegram_user.id)
     if user is None:
-        user = User(id=telegram_user.id, registered_at=now)
+        user = User(id=telegram_user.id, registered_at=now, current_model=get_default_model(db))
         db.add(user)
     for field in ("first_name", "last_name", "username", "language_code"):
         setattr(user, field, getattr(telegram_user, field, None))

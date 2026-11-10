@@ -15,6 +15,7 @@ MAX_MESSAGE_LENGTH = 16000
 
 MAX_FILE_SIZE_MB = 20
 
+# Initial settings for new databases. Runtime access and defaults live in bot.db.
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 FLASH_MODEL = "gemini-3.8-flash"
 IMAGE_MODEL = "gemini-3.1-flash-image"
@@ -28,18 +29,9 @@ MODEL_ALIASES = {
 }
 
 
-def resolve_user_model(model_name, has_pro_access):
-    """Fall back to Lite for retired models and models requiring access."""
-    if model_name not in AVAILABLE_MODELS:
-        return DEFAULT_MODEL
-    if model_name in PREMIUM_MODELS and not has_pro_access:
-        return DEFAULT_MODEL
-    return model_name
-
-
-def get_model_alias(full_name, default="Неизвестно"):
+def get_model_alias(full_name, default=None):
     """Возвращает короткий псевдоним для полного имени модели."""
-    return MODEL_ALIASES.get(full_name, default)
+    return MODEL_ALIASES.get(full_name, full_name if default is None else default)
 
 
 def is_image_generation_model(model_name):
@@ -48,7 +40,7 @@ def is_image_generation_model(model_name):
         "gemini-3.1-flash-image",
         "gemini-3.1-flash-image-preview",
         "gemini-3-pro-image",
-    ] or "-image" in model_name
+    ] or "-image" in model_name or "nano-banana" in model_name
 
 
 COMMAND_LIST = [
@@ -105,9 +97,9 @@ HELP_TEXT_TEMPLATE = (
     "• *Новый чат:* Нажмите кнопку, чтобы стереть память и начать с чистого листа (при смене модели диалог сохраняется).\n"
     "• *Контекст:* Кнопка «Контекст 🧠» или /context показывает размер истории, файлов и буфера в токенах.\n"
     "• *Поиск Google:* Включает доступ к интернету для актуальных ответов.\n\n"
-    "🎤 *Голосовые:* Пришлите голосовое — я отвечу текстом (Flash Lite или Flash). В ручном режиме оно добавляется в буфер. До 20 МБ.\n\n"
+    "🎤 *Голосовые:* Выберите текстовую модель с поддержкой аудио, и я отвечу текстом. В ручном режиме голосовое добавляется в буфер. До 20 МБ.\n\n"
     "🎨 *Генерация изображений:*\n"
-    "Переключитесь на модель *3.1 Flash IMG🎨*.\n"
+    "Выберите доступную модель генерации изображений в меню «Модель».\n"
     "• *Текст → Картинка:* «Нарисуй киберпанк-город».\n"
     "• *Фото → Изменение:* Пришлите фото с подписью «Сделай черно-белым» или «Добавь очки».\n\n"
     "📄 *Работа с файлами:*\n"

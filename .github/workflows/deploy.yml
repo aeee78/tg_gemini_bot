@@ -20,6 +20,35 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
+      - name: Back up server code and SQLite before deployment
+        run: |
+          EFFECTIVE_SSH_PORT=${TARGET_SERVER_SSH_PORT_FROM_SECRET:-22}
+          ssh -p "$EFFECTIVE_SSH_PORT" -o StrictHostKeyChecking=no root@$TARGET_SERVER_IP 'python3 -' << 'PY'
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import sqlite3
+          import tarfile
+
+          project = Path('/home/tg_gemini_bot')
+          if project.is_dir():
+              backup = Path('/home/tg_gemini_bot_backups') / datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+              backup.mkdir(parents=True, mode=0o700)
+              excluded = {'.venv', 'venv', '.env', '.git', '__pycache__', '.pytest_cache'}
+              def include(info):
+                  parts = Path(info.name).parts
+                  if any(part in excluded or part.startswith('bot.db') for part in parts):
+                      return None
+                  return info
+              with tarfile.open(backup / 'code.tar.gz', 'w:gz') as archive:
+                  archive.add(project, arcname='.', filter=include)
+              database = project / 'bot.db'
+              if database.is_file():
+                  with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as source:
+                      with sqlite3.connect(backup / 'bot.db') as target:
+                          source.backup(target)
+              print(f'Backup created: {backup}')
+          PY
+
       - name: Create project directory on server and copy files
         run: |
           EFFECTIVE_SSH_PORT=${TARGET_SERVER_SSH_PORT_FROM_SECRET:-22}
@@ -131,7 +160,9 @@ jobs:
 
             echo "--- Checking service status ---"
             sleep 5
-            systemctl status $SERVICE_NAME --no-pager || echo "Warning: Service status check indicated an issue. Please check logs on the server: journalctl -u $SERVICE_NAME -f"
+            systemctl is-active --quiet $SERVICE_NAME
+            systemctl status $SERVICE_NAME --no-pager
+            .venv/bin/python -c 'from database.db import SessionLocal; from database.model_catalog import get_default_model, can_use_model, list_models; s = SessionLocal(); model = get_default_model(s); assert can_use_model(s, model); print(f"Model catalog ready: {len(list_models(s))} models, default: {model}"); s.close()'
 
             echo "--- Deployment finished successfully! ---"
           EOF

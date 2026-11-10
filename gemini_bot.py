@@ -13,10 +13,6 @@ from PIL import Image
 
 from constants import (
     COMMAND_LIST,
-    AVAILABLE_MODELS,
-    PREMIUM_MODELS,
-    resolve_user_model,
-    DEFAULT_MODEL,
     GEMINI_API_KEY,
     PRO_CODE,
     GREETING_MESSAGE_TEMPLATE,
@@ -46,6 +42,7 @@ from utils import (
 )
 
 from database import db, crud
+from database import model_catalog
 from database.db import SessionLocal
 from admin import register_admin_handlers
 from usage import track_gemini_call
@@ -60,7 +57,7 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 bot.set_my_commands(COMMAND_LIST)
 
 # Register before general message handlers.
-register_admin_handlers(bot, SessionLocal)
+register_admin_handlers(bot, SessionLocal, model_client=client)
 
 # Global stores
 user_chats = {}  # Cache for active chat sessions
@@ -96,9 +93,17 @@ def serialize_user_operation(func):
 # --- Helper Functions for Persistence ---
 
 
-def generate_with_typing(chat_id, *args, **kwargs):
+def generate_with_typing(chat_id, user_id, model_name, operation, api_call, *args, **kwargs):
+    # Recheck after preparing uploads/config: admin policy may have changed.
+    with SessionLocal() as session:
+        if not model_catalog.can_use_model(session, model_name, crud.has_pro_access(session, user_id)):
+            raise PermissionError("Доступ к модели изменился. Выберите доступную модель в меню.")
+    chat = user_chats.get(user_id)
+    if (operation in ('chat', 'photo', 'buffer') and is_image_generation_model(model_name)
+            and chat is not None and contains_audio(chat.get_history(curated=True))):
+        raise ValueError("В истории есть голосовые. Выберите текстовую модель или начните новый чат; история и буфер сохранены.")
     with typing_action(bot, chat_id):
-        return track_gemini_call(*args, **kwargs)
+        return track_gemini_call(user_id, model_name, operation, api_call, *args, **kwargs)
 
 
 def deserialize_history(history_json):
@@ -138,7 +143,7 @@ def deserialize_history(history_json):
 
 def ensure_user_model(session, user):
     """Apply current model availability and access to saved user settings."""
-    model_name = resolve_user_model(user.current_model, user.pro_access)
+    model_name = model_catalog.resolve_model(session, user.current_model, user.pro_access)
     if model_name != user.current_model:
         cached = user_chats.get(user.id)
         if cached is not None and hasattr(cached, "get_history"):
@@ -329,7 +334,18 @@ def ensure_user_started(func):
                     )
                 return None
             user = crud.record_user_activity(session, message.from_user)
-            ensure_user_model(session, user)
+            previous_model = user.current_model
+            user = ensure_user_model(session, user)
+            model_changed = user.current_model != previous_model
+            current_model = user.current_model
+            markup = get_main_keyboard(user.send_mode, user.search_enabled, current_model) if model_changed else None
+        if model_changed:
+            bot.send_message(
+                chat_id,
+                f"Выбранная модель больше недоступна. Теперь выбрана {get_model_alias(current_model)}.\n"
+                "История, файлы и буфер сохранены.",
+                reply_markup=markup,
+            )
         return func(message, *args, **kwargs)
 
     return wrapper
@@ -450,7 +466,7 @@ def handle_unlock_pro(message):
         and command_parts[1].strip() == PRO_CODE
     ):
         add_to_whitelist(user_id)
-        bot.reply_to(message, "✅ Доступ к 3.8 Flash и генерации изображений разблокирован!")
+        bot.reply_to(message, "✅ Доступ к моделям для белого списка разблокирован!")
     else:
         bot.reply_to(message, "❌ Неверный код. Используйте другой")
 
@@ -705,12 +721,15 @@ def show_context_size(message):
 @ensure_user_started
 def select_model(message):
     """Обрабатывает нажатие кнопки "Выбрать модель"."""
+    with SessionLocal() as session:
+        models = model_catalog.list_models(session, include_disabled=False)
+        markup = get_model_selection_keyboard(
+            models, has_pro_access=crud.has_pro_access(session, message.from_user.id)
+        )
     bot.send_message(
         message.chat.id,
         "Выберите модель Gemini:",
-        reply_markup=get_model_selection_keyboard(
-            has_pro_access=is_whitelisted(message.from_user.id)
-        ),
+        reply_markup=markup,
     )
 
 
@@ -752,7 +771,7 @@ def handle_send_all(message):
 
     has_voice = any(item["type"] == "voice" for item in buffered_items)
     if has_voice and is_image_generation_model(current_model):
-        bot.reply_to(message, "Для голосовых выберите Flash Lite или Flash. Буфер сохранён.")
+        bot.reply_to(message, "Для голосовых выберите текстовую модель с поддержкой аудио. Буфер сохранён.")
         return
 
     # Load/Ensure chat exists
@@ -966,26 +985,29 @@ def handle_get_file(call):
 def handle_model_selection(call):
     """Обрабатывает нажатия кнопок выбора модели."""
     user_id = call.from_user.id
-    selected_model = call.data.replace("model_", "")
-
-    if selected_model not in AVAILABLE_MODELS:
-        bot.answer_callback_query(
-            call.id,
-            text="Эта модель больше недоступна. Выберите модель из меню.",
-        )
-        return
-
     with SessionLocal() as session:
         user = crud.get_or_create_user(session, user_id)
-
-        if selected_model in PREMIUM_MODELS and not is_whitelisted(user_id):
+        if call.data.startswith('model_id_'):
+            identifier = call.data.removeprefix('model_id_')
+            model = (model_catalog.get_model_by_id(session, int(identifier))
+                     if identifier.isascii() and identifier.isdecimal() and len(identifier) <= 18 else None)
+        else:
+            # Old keyboards remain valid only while the current policy permits them.
+            model = model_catalog.get_model(session, call.data.removeprefix('model_'))
+        if model is None or model.access == 'disabled':
+            bot.answer_callback_query(
+                call.id, text="Эта модель больше недоступна. Выберите модель из меню."
+            )
+            return
+        selected_model = model.name
+        if not model_catalog.can_use_model(session, selected_model, user.pro_access):
             bot.answer_callback_query(
                 call.id,
                 text="Доступ ограничен. Используйте /unlock_pro <код>",
             )
             bot.send_message(
                 call.message.chat.id,
-                "Для доступа к 3.8 Flash и генерации изображений используйте /unlock_pro <код>.",
+                "Для доступа к закрытым моделям используйте /unlock_pro <код>.",
                 reply_markup=get_main_keyboard(
                     user.send_mode, user.search_enabled, user.current_model
                 ),
@@ -1162,7 +1184,7 @@ def handle_voice(message):
         current_model, current_mode = user.current_model, user.send_mode
         search_enabled = user.search_enabled
     if is_image_generation_model(current_model):
-        bot.reply_to(message, "Для голосовых выберите Flash Lite или Flash.")
+        bot.reply_to(message, "Для голосовых выберите текстовую модель с поддержкой аудио.")
         return
     max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
     if (message.voice.file_size or 0) > max_bytes:
@@ -1353,10 +1375,15 @@ def handle_quick_tool_command(message):
 
     tool_config = QUICK_TOOLS_CONFIG[command]
     system_instruction = tool_config["system_instruction"]
-    model_to_use = tool_config.get("model", DEFAULT_MODEL)
-    if model_to_use in PREMIUM_MODELS and not is_whitelisted(user_id):
-        bot.reply_to(message, "Для этой команды нужен доступ: /unlock_pro <код>.")
-        return
+    with SessionLocal() as session:
+        model_to_use = tool_config.get("model") or model_catalog.get_default_model(session)
+        model = model_catalog.get_model(session, model_to_use)
+        if model is None or model.access == 'disabled':
+            bot.reply_to(message, "Модель этой команды отключена. Обратитесь к администратору.")
+            return
+        if not model_catalog.can_use_model(session, model_to_use, crud.has_pro_access(session, user_id)):
+            bot.reply_to(message, "Для этой команды нужен доступ: /unlock_pro <код>.")
+            return
     thinking_budget = tool_config.get("thinking_budget", None)
 
     status_msg = bot.reply_to(

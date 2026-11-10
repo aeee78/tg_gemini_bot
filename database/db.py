@@ -29,6 +29,7 @@ Base = declarative_base()
 
 def init_db(whitelist_path="whitelist.txt"):
     from database.models import User
+    from database.model_catalog import ensure_catalog
 
     Base.metadata.create_all(bind=engine)
     migrate_user_profile()
@@ -38,6 +39,9 @@ def init_db(whitelist_path="whitelist.txt"):
             f"Whitelist migration completed: {imported} users granted pro_access=True.",
             flush=True,
         )
+    # Bind explicitly so migrations and isolated database checks use the same DB.
+    with sessionmaker(bind=engine)() as session:
+        ensure_catalog(session)
 
 
 def migrate_whitelist(whitelist_path, users_table):
