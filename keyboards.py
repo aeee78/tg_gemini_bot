@@ -34,15 +34,17 @@ def get_main_keyboard(
     return keyboard
 
 
-def get_model_selection_keyboard(models, has_pro_access=False):
+def get_model_selection_keyboard(models, has_pro_access=False, is_admin=False):
     """Создает клавиатуру выбора модели."""
     keyboard = types.InlineKeyboardMarkup()
     for model in models:
-        if model.access == 'disabled':
+        if model.access == 'disabled' or (model.access == 'admin' and not is_admin):
             continue
         alias = model.display_name or get_model_alias(model.name)
-        if model.access == 'whitelist' and not has_pro_access:
+        if model.access == 'whitelist' and not (has_pro_access or is_admin):
             alias = f"{alias} 🔒"
+        elif model.access == 'admin':
+            alias = f"{alias} 🛡"
         keyboard.add(
             types.InlineKeyboardButton(
                 text=alias,

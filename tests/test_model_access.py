@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from constants import DEFAULT_MODEL, FLASH_MODEL, IMAGE_MODEL
+from constants import ADMIN_IDS, DEFAULT_MODEL, FLASH_MODEL, IMAGE_MODEL
 from database import crud
 from database import model_catalog
 from database.db import Base
@@ -478,6 +478,93 @@ class TestModelAccess(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.app.generate_with_typing(123, 123, FLASH_MODEL, 'chat', request, message='hello')
         request.assert_not_called()
+
+    def test_admin_models_are_hidden_and_old_buttons_rejected_for_regular_and_whitelist_users(self):
+        with self.sessions() as session:
+            model_id = model_catalog.get_model(session, FLASH_MODEL).id
+            model_catalog.set_model_access(session, model_id, 'admin')
+        for pro_access in (False, True):
+            with self.subTest(pro_access=pro_access):
+                self.set_access(pro_access)
+                self.app.select_model.__wrapped__(self.message)
+                rows = self.app.bot.send_message.call_args.kwargs['reply_markup'].to_dict()['inline_keyboard']
+                self.assertFalse(any(button['callback_data'] == f'model_id_{model_id}'
+                                     for row in rows for button in row))
+                for data in (f'model_id_{model_id}', f'model_{FLASH_MODEL}'):
+                    call = SimpleNamespace(from_user=self.message.from_user, message=self.message,
+                                           id='callback', data=data)
+                    self.app.handle_model_selection.__wrapped__(call)
+                    self.app.client.chats.create.assert_not_called()
+                with self.sessions() as session:
+                    self.assertEqual(crud.get_user(session, 123).current_model, DEFAULT_MODEL)
+
+    def test_admin_without_whitelist_sees_and_can_select_admin_and_whitelist_models(self):
+        admin_id = next(iter(ADMIN_IDS))
+        with self.sessions() as session:
+            crud.create_user(session, admin_id)
+            admin_model_id = model_catalog.get_model(session, FLASH_MODEL).id
+            whitelist_id = model_catalog.get_model(session, IMAGE_MODEL).id
+            model_catalog.set_model_access(session, admin_model_id, 'admin')
+        self.message.from_user = SimpleNamespace(id=admin_id)
+        self.message.chat.id = admin_id
+        self.app.select_model.__wrapped__(self.message)
+        rows = self.app.bot.send_message.call_args.kwargs['reply_markup'].to_dict()['inline_keyboard']
+        buttons = [button for row in rows for button in row]
+        self.assertTrue(any(button['callback_data'] == f'model_id_{admin_model_id}' for button in buttons))
+        self.assertTrue(any(button['callback_data'] == f'model_id_{whitelist_id}'
+                            and not button['text'].endswith('🔒') for button in buttons))
+        for model_id, model_name in ((admin_model_id, FLASH_MODEL), (whitelist_id, IMAGE_MODEL)):
+            with self.subTest(model=model_name):
+                call = SimpleNamespace(from_user=self.message.from_user, message=self.message,
+                                       id='callback', data=f'model_id_{model_id}')
+                self.app.handle_model_selection.__wrapped__(call)
+                with self.sessions() as session:
+                    user = crud.get_user(session, admin_id)
+                    self.assertFalse(user.pro_access)
+                    self.app.ensure_user_model(session, user)
+                    self.assertEqual(user.current_model, model_name)
+                request = MagicMock()
+                self.app.generate_with_typing(admin_id, admin_id, model_name, 'test', request)
+                request.assert_called_once()
+
+    def test_admin_quick_tool_and_final_gate_reject_nonadmin_even_with_whitelist(self):
+        admin_id = next(iter(ADMIN_IDS))
+        with self.sessions() as session:
+            crud.create_user(session, admin_id)
+            model_id = model_catalog.get_model(session, FLASH_MODEL).id
+            model_catalog.set_model_access(session, model_id, 'admin')
+        self.set_access(True)
+        self.message.text = '/promptpro hello'
+        self.app.handle_quick_tool_command.__wrapped__(self.message)
+        self.app.client.models.generate_content.assert_not_called()
+        self.assertIn('только администратору', self.app.bot.reply_to.call_args.args[1])
+        request = MagicMock()
+        with self.assertRaises(PermissionError):
+            self.app.generate_with_typing(123, 123, FLASH_MODEL, 'chat', request, message='hello')
+        request.assert_not_called()
+        self.message.from_user = SimpleNamespace(id=admin_id)
+        self.message.chat.id = admin_id
+        with patch.object(self.app, 'send_rich_response'):
+            self.app.handle_quick_tool_command.__wrapped__(self.message)
+        self.app.client.models.generate_content.assert_called_once()
+        self.assertEqual(self.app.client.models.generate_content.call_args.kwargs['model'], FLASH_MODEL)
+        with self.sessions() as session:
+            model_catalog.set_model_access(session, model_id, 'disabled')
+        with self.assertRaises(PermissionError):
+            self.app.generate_with_typing(admin_id, admin_id, FLASH_MODEL, 'chat', request, message='hello')
+        request.assert_not_called()
+
+    def test_restricting_selected_model_to_admin_moves_whitelist_user_to_default(self):
+        self.set_access(True)
+        cached = MagicMock()
+        cached.get_history.return_value = []
+        self.app.user_chats[123] = cached
+        with self.sessions() as session:
+            user = crud.update_user_model(session, 123, FLASH_MODEL)
+            model_catalog.set_model_access(session, model_catalog.get_model(session, FLASH_MODEL).id, 'admin')
+            self.app.ensure_user_model(session, user)
+            self.assertEqual(user.current_model, DEFAULT_MODEL)
+        self.assertNotIn(123, self.app.user_chats)
 
     def test_fallback_to_image_default_preserves_audio_and_blocks_generation(self):
         from chat_context import serialize_history
