@@ -105,9 +105,10 @@ class TestInlineBot(unittest.TestCase):
 
     def test_long_unicode_output_fits_inline_message_limit(self):
         self.client.models.generate_content.return_value.text = '😀' * 5000
-        self.chosen(self.query())
+        self.chosen(self.query('Вопрос ' * 200))
         text = self.bot.edit_message_text.call_args.args[0]
         self.assertLessEqual(len(text.encode('utf-16-le')) // 2, 4096)
+        self.assertIn('😀', text)
         self.assertIn('сокращён', text)
 
     def test_jobs_expire_and_cache_is_bounded(self):

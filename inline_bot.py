@@ -12,7 +12,7 @@ from telebot import types
 from constants import ADMIN_IDS, DEFAULT_MODEL
 from database import crud, model_catalog
 from usage import track_gemini_call
-from utils import markdown_to_text, split_plain_text
+from utils import markdown_to_text
 
 INLINE_MODEL = DEFAULT_MODEL  # Fixed Flash Lite; independent of the admin default.
 logger = logging.getLogger(__name__)
@@ -143,8 +143,10 @@ class InlineBot:
                 self.edit(message_id, 'Модель не вернула текст. Попробуйте переформулировать запрос.', token)
                 return
             text = job['prompt'] + '\n\n' + markdown_to_text(response.text)
-            chunks = split_plain_text(text, max_length=3900)
-            text = chunks[0] + ('\n\n[Ответ сокращён до лимита Telegram.]' if len(chunks) > 1 else '')
+            encoded = text.encode('utf-16-le')
+            if len(encoded) > 7800:
+                text = encoded[:7800].decode('utf-16-le', errors='ignore')
+                text += '\n\n[Ответ сокращён до лимита Telegram.]'
             with self.lock:
                 job['text'] = text
             self.edit(message_id, text)
