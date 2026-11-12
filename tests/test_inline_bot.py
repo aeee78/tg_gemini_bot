@@ -144,6 +144,8 @@ class TestInlineBot(unittest.TestCase):
     def test_registers_inline_chosen_and_callback_handlers(self):
         with patch('inline_bot.ThreadPoolExecutor'):
             panel = register_inline_handlers(self.bot, self.client, self.sessions)
+        self.addCleanup(panel.dispatcher.close, wait=True)
+        self.assertEqual(self.bot.process_new_inline_query, panel.dispatcher.dispatch)
         self.bot.register_inline_handler.assert_called_once()
         self.bot.register_chosen_inline_handler.assert_called_once()
         predicate = self.bot.register_callback_query_handler.call_args.kwargs['func']
