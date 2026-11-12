@@ -34,7 +34,7 @@ class InlineBot:
 
     def keyboard(self, token):
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton('Получить ответ / повторить', callback_data='inline:' + token))
+        markup.add(types.InlineKeyboardButton('Обновить ответ', callback_data='inline:' + token))
         return markup
 
     def query(self, query):
@@ -55,10 +55,10 @@ class InlineBot:
                 self.jobs[token] = dict(owner=query.from_user.id, prompt=prompt, created=now,
                                         state='pending', text=None)
             results.append(types.InlineQueryResultArticle(
-                id='ask_' + token, title='Спросить Flash Lite',
+                id='ask_' + token, title='Спросить Gemini',
                 description=prompt[:100],
                 input_message_content=types.InputTextMessageContent(
-                    prompt + '\n\nГотовлю ответ… Если ответ не появляется, нажмите кнопку ниже.',
+                    prompt + '\n\nGemini готовит ответ…',
                 ), reply_markup=self.keyboard(token),
             ))
         self.bot.answer_inline_query(query.id, results, cache_time=0, is_personal=True)

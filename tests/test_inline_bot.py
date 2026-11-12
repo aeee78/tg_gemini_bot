@@ -167,17 +167,21 @@ class TestInlineBot(unittest.TestCase):
             bot.process_new_updates([update])
         answer.assert_called_once()
         result = answer.call_args.args[1][0]
-        self.assertEqual(result.title, 'Спросить Flash Lite')
+        self.assertEqual(result.title, 'Спросить Gemini')
         self.assertEqual(result.description, 'Привет')
+        self.assertNotIn('нажмите', result.input_message_content.message_text)
+        self.assertEqual(result.reply_markup.keyboard[0][0].text, 'Обновить ответ')
         self.client.models.generate_content.assert_not_called()
         chosen = types.Update.de_json({
             'update_id': 2,
             'chosen_inline_result': {'result_id': result.id, 'from': actor,
                                      'query': 'Привет', 'inline_message_id': 'inline-message'},
         })
-        with patch.object(panel, 'start') as start:
+        panel.submit = lambda fn, *args: fn(*args)
+        with patch.object(bot, 'edit_message_text') as edit:
             bot.process_new_updates([chosen])
-        start.assert_called_once()
-        self.assertEqual(start.call_args.args[0], result.id.removeprefix('ask_'))
-        self.assertEqual(start.call_args.args[1].id, 123)
-        self.assertEqual(start.call_args.args[2], 'inline-message')
+        self.client.models.generate_content.assert_called_once()
+        edit.assert_called_once()
+        self.assertEqual(edit.call_args.kwargs['inline_message_id'], 'inline-message')
+        self.assertEqual(edit.call_args.args[0], 'Привет\n\nAnswer')
+        self.assertEqual(edit.call_args.kwargs['reply_markup'].keyboard, [])
