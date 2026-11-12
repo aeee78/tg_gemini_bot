@@ -13,7 +13,6 @@ from constants import ADMIN_IDS, DEFAULT_MODEL
 from database import crud, model_catalog
 from usage import track_gemini_call
 from utils import markdown_to_text
-from inline_dispatch import InlineQueryDispatcher
 
 INLINE_MODEL = DEFAULT_MODEL  # Fixed Flash Lite; independent of the admin default.
 logger = logging.getLogger(__name__)
@@ -62,12 +61,7 @@ class InlineBot:
                     prompt + '\n\nГотовлю ответ… Если ответ не появляется, нажмите кнопку ниже.',
                 ), reply_markup=self.keyboard(token),
             ))
-        try:
-            self.bot.answer_inline_query(query.id, results, cache_time=0, is_personal=True)
-        except Exception as error:
-            logger.warning('Inline result delivery failed (%s, code=%s)',
-                           type(error).__name__, getattr(error, 'error_code', None))
-            raise
+        self.bot.answer_inline_query(query.id, results, cache_time=0, is_personal=True)
 
     def chosen(self, chosen):
         if chosen.result_id.startswith('ask_') and chosen.inline_message_id:
@@ -169,11 +163,6 @@ class InlineBot:
 def register_inline_handlers(bot, client, sessions):
     panel = InlineBot(bot, client, sessions)
     bot.register_inline_handler(panel.query, func=lambda query: True)
-    # The SDK normally queues inline answers behind slow private generations.
-    # Dispatch this quick phase separately; chosen-result generation remains
-    # bounded by InlineBot's own executor and semaphore.
-    panel.dispatcher = InlineQueryDispatcher(panel.query)
-    bot.process_new_inline_query = panel.dispatcher.dispatch
     bot.register_chosen_inline_handler(panel.chosen, func=lambda chosen: True)
     bot.register_callback_query_handler(panel.callback, func=lambda call: bool(call.data and call.data.startswith('inline:')))
     return panel

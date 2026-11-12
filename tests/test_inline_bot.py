@@ -144,11 +144,40 @@ class TestInlineBot(unittest.TestCase):
     def test_registers_inline_chosen_and_callback_handlers(self):
         with patch('inline_bot.ThreadPoolExecutor'):
             panel = register_inline_handlers(self.bot, self.client, self.sessions)
-        self.addCleanup(panel.dispatcher.close, wait=True)
-        self.assertEqual(self.bot.process_new_inline_query, panel.dispatcher.dispatch)
         self.bot.register_inline_handler.assert_called_once()
         self.bot.register_chosen_inline_handler.assert_called_once()
         predicate = self.bot.register_callback_query_handler.call_args.kwargs['func']
         self.assertTrue(predicate(SimpleNamespace(data='inline:token')))
         self.assertFalse(predicate(SimpleNamespace(data='model_id_1')))
         self.assertFalse(predicate(SimpleNamespace(data=None)))
+
+    def test_sdk_updates_show_menu_before_starting_generation(self):
+        from telebot import TeleBot, types
+
+        bot = TeleBot('123:TEST', threaded=False)
+        self.addCleanup(bot.stop_bot)
+        panel = register_inline_handlers(bot, self.client, self.sessions)
+        self.addCleanup(panel.executor.shutdown, wait=True, cancel_futures=True)
+        actor = {'id': 123, 'is_bot': False, 'first_name': 'User'}
+        update = types.Update.de_json({
+            'update_id': 1,
+            'inline_query': {'id': 'query', 'from': actor, 'query': 'Привет', 'offset': ''},
+        })
+        with patch.object(bot, 'answer_inline_query') as answer:
+            bot.process_new_updates([update])
+        answer.assert_called_once()
+        result = answer.call_args.args[1][0]
+        self.assertEqual(result.title, 'Спросить Flash Lite')
+        self.assertEqual(result.description, 'Привет')
+        self.client.models.generate_content.assert_not_called()
+        chosen = types.Update.de_json({
+            'update_id': 2,
+            'chosen_inline_result': {'result_id': result.id, 'from': actor,
+                                     'query': 'Привет', 'inline_message_id': 'inline-message'},
+        })
+        with patch.object(panel, 'start') as start:
+            bot.process_new_updates([chosen])
+        start.assert_called_once()
+        self.assertEqual(start.call_args.args[0], result.id.removeprefix('ask_'))
+        self.assertEqual(start.call_args.args[1].id, 123)
+        self.assertEqual(start.call_args.args[2], 'inline-message')

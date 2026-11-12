@@ -58,7 +58,7 @@ bot.set_my_commands(COMMAND_LIST)
 
 # Register before general message handlers.
 register_admin_handlers(bot, SessionLocal, model_client=client)
-inline_panel = register_inline_handlers(bot, client, SessionLocal)
+register_inline_handlers(bot, client, SessionLocal)
 
 # Global stores
 user_chats = {}  # Cache for active chat sessions
@@ -1698,12 +1698,6 @@ def handle_message(message):
 
 if __name__ == "__main__":
     db.init_db()
-    # Recover from transport timeouts as well as Telegram API exceptions. Keep
-    # update requests short so a stalled connection cannot hide fresh queries.
-    try:
-        bot.infinity_polling(timeout=10, long_polling_timeout=5, allowed_updates=[
-            'message', 'callback_query', 'inline_query', 'chosen_inline_result',
-        ])
-    finally:
-        inline_panel.dispatcher.close()
-        inline_panel.executor.shutdown(wait=False, cancel_futures=True)
+    bot.polling(none_stop=True, allowed_updates=[
+        'message', 'callback_query', 'inline_query', 'chosen_inline_result',
+    ])
