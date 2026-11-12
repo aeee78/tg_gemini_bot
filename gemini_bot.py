@@ -44,6 +44,7 @@ from database import db, crud
 from database import model_catalog
 from database.db import SessionLocal
 from admin import register_admin_handlers
+from inline_bot import register_inline_handlers
 from usage import track_gemini_call
 from chat_activity import typing_action
 from chat_context import serialize_history, portable_history, context_contents, contains_audio
@@ -57,6 +58,7 @@ bot.set_my_commands(COMMAND_LIST)
 
 # Register before general message handlers.
 register_admin_handlers(bot, SessionLocal, model_client=client)
+register_inline_handlers(bot, client, SessionLocal)
 
 # Global stores
 user_chats = {}  # Cache for active chat sessions
@@ -1696,4 +1698,6 @@ def handle_message(message):
 
 if __name__ == "__main__":
     db.init_db()
-    bot.polling(none_stop=True)
+    bot.polling(none_stop=True, allowed_updates=[
+        'message', 'callback_query', 'inline_query', 'chosen_inline_result',
+    ])
