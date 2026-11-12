@@ -267,10 +267,11 @@ class AdminPanel:
         lines.extend(f'{get_model_alias(model, model)}: {count}' for model, count in stats['models'])
         lines.extend(['', 'Активность считается по обращениям после начала её учёта.'])
         self.show(message, '\n'.join(lines), keyboard(
+            [('✓ Общая', 'admin:stats'), ('Inline', 'admin:inline:today:sum:0:0')],
             [('Обновить', 'admin:stats')], [('В меню', 'admin:home')],
         ), edit=True)
 
-    def usage(self, message, period='today', group='sum', user_id=0, page=0):
+    def usage(self, message, period='today', group='sum', user_id=0, page=0, operation=None):
         now = datetime.now(timezone.utc)
         today = now.astimezone(DISPLAY_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
         since = None if period == 'all' else (
@@ -278,18 +279,24 @@ class AdminPanel:
         ).astimezone(timezone.utc).replace(tzinfo=None)
         until = now.replace(tzinfo=None)
         target = user_id or None
+        inline = operation == 'inline'
+        namespace = 'inline' if inline else 'usage'
         labels = {'today': 'Сегодня', 'week': '7 дней', 'month': '30 дней', 'all': 'Всё время'}
-        lines = [f'📈 Расход · {labels[period]} (Москва)']
+        title = '⚡ Inline-статистика' if inline else '📈 Расход'
+        lines = [f'{title} · {labels[period]} (Москва)']
         with self.sessions() as session:
             if target:
                 user = crud.get_user(session, target)
                 lines.append(f'Пользователь: {user_label(user) if user else target} · ID {target}')
-            data = usage_queries.summary(session, since, until, target)
+            data = usage_queries.summary(session, since, until, target, operation=operation)
+            if inline:
+                lines.append(f'Уникальные пользователи: {data["unique_users"]}')
             lines.extend(['', *usage_lines(data)])
             detail_rows = []
             if group != 'sum':
                 results, page, pages = usage_queries.breakdown(
                     session, group, since, until, target, page, USAGE_PAGE_SIZE,
+                    operation=operation,
                 )
                 lines.extend(['', 'По моделям:' if group == 'models' else 'По пользователям:'])
                 if not results:
@@ -299,30 +306,44 @@ class AdminPanel:
                              if group == 'models' else result['label'])
                     lines.extend(['', label[:100], *usage_lines(result, compact=True)])
                     if group == 'users':
-                        detail_rows.append([(label[:50], f'admin:usage:{period}:sum:{result["group_id"]}:0')])
+                        detail_rows.append([(
+                            label[:50], f'admin:{namespace}:{period}:sum:{result["group_id"]}:{page if inline else 0}',
+                        )])
                 if pages > 1:
                     lines.append(f'Страница {page + 1} из {pages}')
                     navigation = []
                     if page:
-                        navigation.append(('←', f'admin:usage:{period}:{group}:{user_id}:{page - 1}'))
+                        navigation.append(('←', f'admin:{namespace}:{period}:{group}:{user_id}:{page - 1}'))
                     if page + 1 < pages:
-                        navigation.append(('→', f'admin:usage:{period}:{group}:{user_id}:{page + 1}'))
+                        navigation.append(('→', f'admin:{namespace}:{period}:{group}:{user_id}:{page + 1}'))
                     detail_rows.append(navigation)
             first = data['first_recorded_at']
-            lines.extend(['', f'Учёт с: {format_date(first) if first else "первого запроса после обновления"}',
+            start_label = 'Учёт inline с' if inline else 'Учёт с'
+            no_records = 'первого inline-запроса' if inline else 'первого запроса после обновления'
+            lines.extend(['', f'{start_label}: {format_date(first) if first else no_records}',
                           'Кеш входит во входные токены. Время — вызов API.'])
+            if inline:
+                lines.append('Учитываются вызовы Gemini. Показы меню и повторная выдача готового ответа не учитываются.')
         def route(p=period, g=group, u=user_id, n=0):
-            return f'admin:usage:{p}:{g}:{u}:{n}'
+            return f'admin:{namespace}:{p}:{g}:{u}:{n}'
         rows = [
             [(label, route(p=p)) for p, label in [('today', 'Сегодня'), ('week', '7 дней'), ('month', '30 дней'), ('all', 'Всё время')]],
-            [('Общее', route(g='sum')), ('По моделям', route(g='models'))],
         ]
+        if inline:
+            rows.insert(0, [('Общая', 'admin:stats'), ('✓ Inline', route(g='sum', u=0))])
+            rows.append([('Общее', route(g='sum'))])
+        else:
+            rows.append([('Общее', route(g='sum')), ('По моделям', route(g='models'))])
         if not target:
             rows.append([('По пользователям', route(g='users'))])
         rows.extend(detail_rows)
         rows.append([('Обновить', route(n=page))])
         if target:
-            rows.append([('← Карточка', f'admin:user:{user_id}:all:0'), ('Общий расход', 'admin:usage:today:sum:0:0')])
+            if inline:
+                rows.append([('← По пользователям', route(g='users', u=0, n=page))])
+                rows.append([('Карточка пользователя', f'admin:user:{user_id}:all:0')])
+            else:
+                rows.append([('← Карточка', f'admin:user:{user_id}:all:0'), ('Общий расход', 'admin:usage:today:sum:0:0')])
         rows.append([('В меню', 'admin:home')])
         self.show(message, '\n'.join(lines), keyboard(*rows), edit=True)
 
@@ -371,12 +392,14 @@ class AdminPanel:
               and int(parts[2]) < 2**63 and parts[3] in MODEL_ACCESS_LABELS
               and parts[4].isascii() and parts[4].isdecimal() and len(parts[4]) <= 9):
             self.change_model(call.message, int(parts[2]), int(parts[4]), access=parts[3])
-        elif (action == 'usage' and len(parts) == 6
+        elif (action in ('usage', 'inline') and len(parts) == 6
               and parts[2] in ('today', 'week', 'month', 'all')
-              and parts[3] in ('sum', 'models', 'users')
-              and parts[4].isdecimal() and len(parts[4]) <= 19
-              and int(parts[4]) < 2**63 and parts[5].isdecimal()):
-            self.usage(call.message, parts[2], parts[3], int(parts[4]), int(parts[5]))
+              and parts[3] in (('sum', 'users') if action == 'inline' else ('sum', 'models', 'users'))
+              and parts[4].isascii() and parts[4].isdecimal() and len(parts[4]) <= 19
+              and int(parts[4]) < 2**63
+              and parts[5].isascii() and parts[5].isdecimal() and len(parts[5]) <= 9):
+            self.usage(call.message, parts[2], parts[3], int(parts[4]), int(parts[5]),
+                       operation='inline' if action == 'inline' else None)
         elif action == 'users' and len(parts) == 4 and parts[2] in ('all', 'pro') and parts[3].isdigit():
             self.users(call.message, parts[2], int(parts[3]))
         elif action in ('user', 'confirm') and len(parts) == 5 and parts[2].isdigit() and parts[3] in ('all', 'pro') and parts[4].isdigit():
