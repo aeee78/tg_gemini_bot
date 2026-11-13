@@ -54,14 +54,14 @@ def format_inline_response(prompt, response):
         if len(source_links_markdown(candidate)) <= MAX_MESSAGE_LENGTH // 2:
             rich_sources = candidate
     rich_footer = source_links_markdown(rich_sources)
-    rich_text = escape_rich_markdown(prompt) + '\n\n' + response.text
+    rich_text = escape_rich_markdown(prompt) + '\n\n---\n\n' + response.text
     note = '\n\n[Ответ сокращён до лимита Telegram.]'
     if len(rich_text) + len(rich_footer) > MAX_MESSAGE_LENGTH:
         limit = MAX_MESSAGE_LENGTH - len(rich_footer) - len(note)
         rich_text = split_long_message(rich_text, max_length=limit)[0] + note
     rich_text += rich_footer
 
-    text = prompt + '\n\n' + markdown_to_text(response.text)
+    text = prompt + '\n\n──────────\n\n' + markdown_to_text(response.text)
     limit = 4096 - _utf16_length(footer)
     if _utf16_length(text) > limit:
         text = _truncate_utf16(text, limit - _utf16_length(note)).rstrip() + note
@@ -117,7 +117,7 @@ class InlineBot:
                 id='ask_' + token, title='Спросить Gemini',
                 description=prompt[:100],
                 input_message_content=types.InputTextMessageContent(
-                    prompt + '\n\nGemini готовит ответ…',
+                    prompt + '\n\n──────────\n\nGemini готовит ответ…',
                 ), reply_markup=self.keyboard(token),
             ))
         self.bot.answer_inline_query(query.id, results, cache_time=0, is_personal=True)

@@ -162,7 +162,7 @@ class TestInlineBot(unittest.TestCase):
         self.chosen(token)
         args, kwargs = self.bot.edit_message_text.call_args
         text = args[0]
-        self.assertEqual(text, 'Вопрос 😀 <tag>\n\nОтвет 😀\n\nИсточники:\n1. Погода 🌤\n2. https://example.net/')
+        self.assertEqual(text, 'Вопрос 😀 <tag>\n\n──────────\n\nОтвет 😀\n\nИсточники:\n1. Погода 🌤\n2. https://example.net/')
         self.assertIsNone(kwargs['parse_mode'])
         self.assertEqual([entity.url for entity in kwargs['entities']],
                          ['https://example.org/weather', 'https://example.net/'])
@@ -205,7 +205,7 @@ class TestInlineBot(unittest.TestCase):
                     text='Answer', usage_metadata=None, candidates=candidates,
                 )
                 self.chosen(self.query())
-                self.assertEqual(self.bot.edit_message_text.call_args.args[0], 'Question\n\nAnswer')
+                self.assertEqual(self.bot.edit_message_text.call_args.args[0], 'Question\n\n──────────\n\nAnswer')
                 self.assertEqual(self.bot.edit_message_text.call_args.kwargs['entities'], [])
 
     def test_many_sources_fit_message_limit(self):
@@ -238,7 +238,7 @@ class TestInlineBot(unittest.TestCase):
         self.bot.edit_message_text.assert_called_once()
         kwargs = self.bot.edit_message_text.call_args.kwargs
         self.assertEqual(kwargs['inline_message_id'], 'inline-message')
-        expected = ('Как \\*\\*погода\\*\\*?\n\n' + answer
+        expected = ('Как \\*\\*погода\\*\\*?\n\n---\n\n' + answer
                     + source_links_markdown([('Погода [СПб]', 'https://example.org/weather')]))
         self.assertEqual(kwargs['rich_message'].markdown, expected)
         self.assertNotIn('parse_mode', kwargs)
@@ -290,7 +290,7 @@ class TestInlineBot(unittest.TestCase):
         request.assert_called_once()
         payload = request.call_args.kwargs['params']
         self.assertEqual(payload['inline_message_id'], 'inline-message')
-        self.assertEqual(json.loads(payload['rich_message']), {'markdown': 'Question\n\nAnswer'})
+        self.assertEqual(json.loads(payload['rich_message']), {'markdown': 'Question\n\n---\n\nAnswer'})
         self.assertNotIn('text', payload)
         self.assertNotIn('parse_mode', payload)
 
@@ -366,5 +366,5 @@ class TestInlineBot(unittest.TestCase):
         self.client.models.generate_content.assert_called_once()
         edit.assert_called_once()
         self.assertEqual(edit.call_args.kwargs['inline_message_id'], 'inline-message')
-        self.assertEqual(edit.call_args.kwargs['rich_message'].markdown, 'Привет\n\nAnswer')
+        self.assertEqual(edit.call_args.kwargs['rich_message'].markdown, 'Привет\n\n---\n\nAnswer')
         self.assertEqual(edit.call_args.kwargs['reply_markup'].keyboard, [])
