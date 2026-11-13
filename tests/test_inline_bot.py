@@ -53,6 +53,8 @@ class TestInlineBot(unittest.TestCase):
         request = self.client.models.generate_content.call_args.kwargs
         self.assertEqual((request['model'], request['contents']), (INLINE_MODEL, 'Question'))
         self.assertEqual(request['config'].response_modalities, ['TEXT'])
+        self.assertEqual(len(request['config'].tools), 1)
+        self.assertIsNotNone(request['config'].tools[0].google_search)
         self.assertNotIn('PRIVATE', str(request))
         self.assertEqual(self.bot.edit_message_text.call_args.kwargs['inline_message_id'], 'inline-message')
         self.assertIn('Answer', self.bot.edit_message_text.call_args.args[0])

@@ -136,6 +136,7 @@ class InlineBot:
                     system_instruction='Answer the user in their language. Be concise, use plain text, '
                                        'and aim for at most 3000 characters. This is an independent request.',
                     response_modalities=['TEXT'], max_output_tokens=2048,
+                    tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())],
                     http_options=genai_types.HttpOptions(timeout=45000),
                 ),
             )
