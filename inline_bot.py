@@ -9,13 +9,60 @@ import secrets
 from google.genai import types as genai_types
 from telebot import types
 
-from constants import ADMIN_IDS, DEFAULT_MODEL
+from constants import ADMIN_IDS
 from database import crud, model_catalog
 from usage import track_gemini_call
 from utils import markdown_to_text
 
-INLINE_MODEL = DEFAULT_MODEL  # Fixed Flash Lite; independent of the admin default.
+INLINE_MODEL = 'gemini-flash-lite-latest'  # Independent of the admin default.
 logger = logging.getLogger(__name__)
+
+
+def _utf16_length(text):
+    return len(text.encode('utf-16-le')) // 2
+
+
+def _truncate_utf16(text, limit):
+    return text.encode('utf-16-le')[:limit * 2].decode('utf-16-le', errors='ignore')
+
+
+def format_inline_response(prompt, response):
+    """Keep grounded links intact, reserving their space before shortening the answer."""
+    candidates = getattr(response, 'candidates', None) or []
+    metadata = getattr(candidates[0], 'grounding_metadata', None) if candidates else None
+    sources, seen = [], set()
+    footer = ''
+    for chunk in getattr(metadata, 'grounding_chunks', None) or []:
+        web = getattr(chunk, 'web', None)
+        uri = getattr(web, 'uri', None)
+        if not uri or not uri.startswith(('https://', 'http://')) or uri in seen:
+            continue
+        label = ' '.join((getattr(web, 'title', None) or uri).split()) or uri
+        if _utf16_length(label) > 160:
+            label = _truncate_utf16(label, 159) + '…'
+        line = f'{len(sources) + 1}. {label}'
+        new_footer = footer + '\n' + line if footer else '\n\nИсточники:\n' + line
+        if len(sources) >= 10 or _utf16_length(new_footer) > 1024:
+            break
+        footer = new_footer
+        sources.append((line, label, uri))
+        seen.add(uri)
+
+    text = prompt + '\n\n' + markdown_to_text(response.text)
+    limit = 4096 - _utf16_length(footer)
+    if _utf16_length(text) > limit:
+        note = '\n\n[Ответ сокращён до лимита Telegram.]'
+        text = _truncate_utf16(text, limit - _utf16_length(note)).rstrip() + note
+
+    entities = []
+    offset = _utf16_length(text + '\n\nИсточники:\n')
+    for line, label, uri in sources:
+        prefix = len(line) - len(label)
+        entities.append(types.MessageEntity(
+            'text_link', offset=offset + prefix, length=_utf16_length(label), url=uri,
+        ))
+        offset += _utf16_length(line + '\n')
+    return text + footer, entities
 
 
 class InlineBot:
@@ -53,7 +100,7 @@ class InlineBot:
                     del self.jobs[victim]
                 token = secrets.token_urlsafe(16)
                 self.jobs[token] = dict(owner=query.from_user.id, prompt=prompt, created=now,
-                                        state='pending', text=None)
+                                        state='pending', text=None, entities=[])
             results.append(types.InlineQueryResultArticle(
                 id='ask_' + token, title='Спросить Gemini',
                 description=prompt[:100],
@@ -79,10 +126,10 @@ class InlineBot:
         self.bot.answer_callback_query(call.id)
         self.start(token, call.from_user, call.inline_message_id)
 
-    def edit(self, message_id, text, token=None):
+    def edit(self, message_id, text, token=None, entities=None):
         try:
             self.bot.edit_message_text(
-                text, inline_message_id=message_id, parse_mode=None,
+                text, inline_message_id=message_id, parse_mode=None, entities=entities,
                 disable_web_page_preview=True,
                 reply_markup=self.keyboard(token) if token else types.InlineKeyboardMarkup(),
             )
@@ -96,7 +143,7 @@ class InlineBot:
             if not job or job['owner'] != actor.id or monotonic() - job['created'] > self.TTL:
                 return
             if job['text'] is not None:
-                cached = job['text']
+                cached = (job['text'], job['entities'])
             else:
                 cached = None
                 if job['state'] == 'running':
@@ -110,7 +157,7 @@ class InlineBot:
             self.edit(message_id, 'Сейчас выполняются другие запросы. Нажмите кнопку чуть позже.', token)
             return
         if cached is not None:
-            self.edit(message_id, cached)
+            self.edit(message_id, cached[0], entities=cached[1])
             return
         try:
             self.submit(self.generate, token, actor, message_id, job)
@@ -143,14 +190,10 @@ class InlineBot:
             if not response.text or not response.text.strip():
                 self.edit(message_id, 'Модель не вернула текст. Попробуйте переформулировать запрос.', token)
                 return
-            text = job['prompt'] + '\n\n' + markdown_to_text(response.text)
-            encoded = text.encode('utf-16-le')
-            if len(encoded) > 7800:
-                text = encoded[:7800].decode('utf-16-le', errors='ignore')
-                text += '\n\n[Ответ сокращён до лимита Telegram.]'
+            text, entities = format_inline_response(job['prompt'], response)
             with self.lock:
-                job['text'] = text
-            self.edit(message_id, text)
+                job['text'], job['entities'] = text, entities
+            self.edit(message_id, text, entities=entities)
         except Exception as error:
             logger.warning('Inline request failed (%s)', type(error).__name__)
             self.edit(message_id, 'Не удалось получить ответ. Попробуйте ещё раз позже.', token)

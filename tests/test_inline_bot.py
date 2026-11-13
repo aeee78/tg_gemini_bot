@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from google.genai import types as genai_types
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -17,6 +18,12 @@ class TestInlineBot(unittest.TestCase):
         self.addCleanup(self.engine.dispose)
         Base.metadata.create_all(self.engine)
         self.sessions = sessionmaker(bind=self.engine)
+        with self.sessions() as session:
+            model_catalog.sync_catalog(session, [{
+                'name': 'models/gemini-flash-lite-latest',
+                'supportedGenerationMethods': ['generateContent'],
+            }])
+            model_catalog.set_model_access(session, model_catalog.get_model(session, INLINE_MODEL).id, 'public')
         self.patch = patch('usage.SessionLocal', self.sessions)
         self.patch.start()
         self.addCleanup(self.patch.stop)
@@ -51,6 +58,7 @@ class TestInlineBot(unittest.TestCase):
         token = self.query()
         self.chosen(token)
         request = self.client.models.generate_content.call_args.kwargs
+        self.assertEqual(request['model'], 'gemini-flash-lite-latest')
         self.assertEqual((request['model'], request['contents']), (INLINE_MODEL, 'Question'))
         self.assertEqual(request['config'].response_modalities, ['TEXT'])
         self.assertEqual(len(request['config'].tools), 1)
@@ -112,6 +120,89 @@ class TestInlineBot(unittest.TestCase):
         self.assertLessEqual(len(text.encode('utf-16-le')) // 2, 4096)
         self.assertIn('😀', text)
         self.assertIn('сокращён', text)
+
+    def test_grounded_sources_are_linked_at_end_and_reused_without_regeneration(self):
+        self.client.models.generate_content.return_value = genai_types.GenerateContentResponse(
+            candidates=[genai_types.Candidate(
+                content=genai_types.Content(parts=[genai_types.Part(text='Ответ 😀')]),
+                grounding_metadata=genai_types.GroundingMetadata(grounding_chunks=[
+                    genai_types.GroundingChunk(web=genai_types.GroundingChunkWeb(
+                        title='Погода 🌤', uri='https://example.org/weather',
+                    )),
+                    genai_types.GroundingChunk(web=genai_types.GroundingChunkWeb(
+                        title='Дубликат', uri='https://example.org/weather',
+                    )),
+                    genai_types.GroundingChunk(),
+                    genai_types.GroundingChunk(web=genai_types.GroundingChunkWeb(title='Нет ссылки')),
+                    genai_types.GroundingChunk(web=genai_types.GroundingChunkWeb(
+                        uri='https://example.net/',
+                    )),
+                ]),
+            )],
+        )
+        token = self.query('Вопрос 😀 <tag>')
+        self.chosen(token)
+        args, kwargs = self.bot.edit_message_text.call_args
+        text = args[0]
+        self.assertEqual(text, 'Вопрос 😀 <tag>\n\nОтвет 😀\n\nИсточники:\n1. Погода 🌤\n2. https://example.net/')
+        self.assertIsNone(kwargs['parse_mode'])
+        self.assertEqual([entity.url for entity in kwargs['entities']],
+                         ['https://example.org/weather', 'https://example.net/'])
+        for entity, label in zip(kwargs['entities'], ['Погода 🌤', 'https://example.net/']):
+            selected = text.encode('utf-16-le')[entity.offset * 2:(entity.offset + entity.length) * 2]
+            self.assertEqual(selected.decode('utf-16-le'), label)
+            self.assertEqual(entity.type, 'text_link')
+        self.chosen(token, message_id='second-message')
+        self.client.models.generate_content.assert_called_once()
+        self.assertEqual(self.bot.edit_message_text.call_args.args, args)
+        self.assertEqual(self.bot.edit_message_text.call_args.kwargs['entities'], kwargs['entities'])
+
+    def test_sources_survive_long_answer_and_urls_are_not_shortened(self):
+        long_url = 'https://example.org/' + 'a' * 6000
+        self.client.models.generate_content.return_value = SimpleNamespace(
+            text='😀' * 5000, usage_metadata=None,
+            candidates=[SimpleNamespace(grounding_metadata=SimpleNamespace(grounding_chunks=[
+                SimpleNamespace(web=SimpleNamespace(title='Источник 🌤 ' * 50, uri=long_url)),
+                SimpleNamespace(web=SimpleNamespace(title='Другой источник', uri='https://example.net/')),
+            ]))],
+        )
+        self.chosen(self.query('Вопрос 😀'))
+        text = self.bot.edit_message_text.call_args.args[0]
+        entities = self.bot.edit_message_text.call_args.kwargs['entities']
+        self.assertLessEqual(len(text.encode('utf-16-le')) // 2, 4096)
+        self.assertIn('сокращён', text)
+        self.assertTrue(text.endswith('2. Другой источник'))
+        self.assertEqual(entities[0].url, long_url)
+        self.assertLessEqual(entities[0].length, 160)
+        for entity in entities:
+            self.assertLessEqual(entity.offset + entity.length, len(text.encode('utf-16-le')) // 2)
+
+    def test_missing_grounding_metadata_does_not_add_sources(self):
+        for candidates in (None, [], [SimpleNamespace(grounding_metadata=None)],
+                           [SimpleNamespace(grounding_metadata=SimpleNamespace(grounding_chunks=[]))]):
+            with self.subTest(candidates=candidates):
+                self.client.models.generate_content.return_value = SimpleNamespace(
+                    text='Answer', usage_metadata=None, candidates=candidates,
+                )
+                self.chosen(self.query())
+                self.assertEqual(self.bot.edit_message_text.call_args.args[0], 'Question\n\nAnswer')
+                self.assertEqual(self.bot.edit_message_text.call_args.kwargs['entities'], [])
+
+    def test_many_sources_fit_message_limit(self):
+        self.client.models.generate_content.return_value = SimpleNamespace(
+            text='😀' * 5000, usage_metadata=None,
+            candidates=[SimpleNamespace(grounding_metadata=SimpleNamespace(grounding_chunks=[
+                SimpleNamespace(web=SimpleNamespace(title='🌤' * 100, uri=f'https://example.org/{i}'))
+                for i in range(100)
+            ]))],
+        )
+        self.chosen(self.query())
+        text = self.bot.edit_message_text.call_args.args[0]
+        entities = self.bot.edit_message_text.call_args.kwargs['entities']
+        self.assertLessEqual(len(text.encode('utf-16-le')) // 2, 4096)
+        self.assertGreater(len(entities), 1)
+        self.assertLess(len(entities), 100)
+        self.assertEqual(entities[-1].offset + entities[-1].length, len(text.encode('utf-16-le')) // 2)
 
     def test_jobs_expire_and_cache_is_bounded(self):
         self.panel.MAX_JOBS = 2
