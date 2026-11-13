@@ -1,5 +1,7 @@
 import json
 import base64
+import re
+from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 from markdown import markdown
@@ -15,6 +17,38 @@ class BytesEncoder(json.JSONEncoder):
         if isinstance(obj, bytes):
             return base64.b64encode(obj).decode("utf-8")
         return super().default(obj)
+
+
+def escape_rich_markdown(text):
+    """Quote literal text embedded in a rich Markdown response."""
+    return re.sub(r'([\\`*_{}\[\]()#+\-.!|>~<$=])', r'\\\1', text)
+
+
+def grounding_sources(response):
+    """Read unique web sources from Google metadata, preserving their order."""
+    candidates = getattr(response, 'candidates', None) or []
+    metadata = getattr(candidates[0], 'grounding_metadata', None) if candidates else None
+    sources, seen = [], set()
+    for chunk in getattr(metadata, 'grounding_chunks', None) or []:
+        web = getattr(chunk, 'web', None)
+        uri = getattr(web, 'uri', None)
+        if not uri or not uri.startswith(('https://', 'http://')) or uri in seen:
+            continue
+        title = ' '.join((getattr(web, 'title', None) or uri).split()) or uri
+        sources.append((title, uri))
+        seen.add(uri)
+    return sources
+
+
+def source_links_markdown(sources):
+    """Use the same linked source footer in private and inline rich responses."""
+    if not sources:
+        return ''
+    links = []
+    for number, (title, uri) in enumerate(sources, 1):
+        destination = quote(uri, safe=":/?#@!$&'*+,;=%~._-")
+        links.append(f'{number}. [{escape_rich_markdown(title)}]({destination})')
+    return '\n\nИсточники:\n' + '\n'.join(links)
 
 
 def markdown_to_text(markdown_string):

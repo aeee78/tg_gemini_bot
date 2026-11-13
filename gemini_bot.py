@@ -36,8 +36,10 @@ from functools import wraps
 from threading import Lock, RLock
 
 from utils import (
+    grounding_sources,
     markdown_to_text,
     send_rich_response,
+    source_links_markdown,
 )
 
 from database import db, crud
@@ -962,35 +964,7 @@ def handle_send_all(message):
         else:
             raw_response_text = response.text
 
-        sources_text = ""
-        try:
-            if (
-                response.candidates
-                and response.candidates[0].grounding_metadata
-                and response.candidates[0].grounding_metadata.grounding_chunks
-            ):
-                sources = []
-                for i, chunk in enumerate(
-                    response.candidates[0].grounding_metadata.grounding_chunks
-                ):
-                    if (
-                        hasattr(chunk, "web")
-                        and chunk.web.uri
-                        and chunk.web.title
-                    ):
-                        sources.append(
-                            f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})"
-                        )
-                    elif hasattr(chunk, "web") and chunk.web.uri:
-                        sources.append(
-                            f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})"
-                        )
-
-                if sources:
-                    sources_text = "\n\nИсточники:\n" + "\n".join(sources)
-                    raw_response_text += sources_text
-        except (AttributeError, IndexError) as e:
-            print(f"Не удалось извлечь источники: {e}")
+        raw_response_text += source_links_markdown(grounding_sources(response))
 
         user_last_responses[user_id] = raw_response_text
 
@@ -1645,35 +1619,7 @@ def handle_message(message):
         else:
             raw_response_text = response.text
 
-        sources_text = ""
-        try:
-            if (
-                response.candidates
-                and response.candidates[0].grounding_metadata
-                and response.candidates[0].grounding_metadata.grounding_chunks
-            ):
-                sources = []
-                for i, chunk in enumerate(
-                    response.candidates[0].grounding_metadata.grounding_chunks
-                ):
-                    if (
-                        hasattr(chunk, "web")
-                        and chunk.web.uri
-                        and chunk.web.title
-                    ):
-                        sources.append(
-                            f"{i + 1}. [{chunk.web.title}]({chunk.web.uri})"
-                        )
-                    elif hasattr(chunk, "web") and chunk.web.uri:
-                        sources.append(
-                            f"{i + 1}. [{chunk.web.uri}]({chunk.web.uri})"
-                        )
-
-                if sources:
-                    sources_text = "\n\nИсточники:\n" + "\n".join(sources)
-                    raw_response_text += sources_text
-        except (AttributeError, IndexError) as e:
-            print(f"Не удалось извлечь источники: {e}")
+        raw_response_text += source_links_markdown(grounding_sources(response))
 
         user_last_responses[user_id] = raw_response_text
 

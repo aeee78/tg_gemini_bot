@@ -5,11 +5,13 @@ from unittest.mock import MagicMock, patch
 from google.genai import types as genai_types
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from telebot.apihelper import ApiTelegramException
 
 from database.db import Base
 from database import crud, model_catalog
 from database.models import UsageRecord, ChatSession
 from inline_bot import InlineBot, INLINE_MODEL, register_inline_handlers
+from utils import source_links_markdown
 
 
 class TestInlineBot(unittest.TestCase):
@@ -41,6 +43,16 @@ class TestInlineBot(unittest.TestCase):
         self.panel.chosen(SimpleNamespace(result_id='ask_' + token, from_user=actor or self.actor,
                                          inline_message_id=message_id))
 
+    def use_plain_fallback(self):
+        def edit(*args, **kwargs):
+            if 'rich_message' in kwargs:
+                raise RuntimeError('Rich messages unavailable')
+        self.bot.edit_message_text.side_effect = edit
+
+    def last_answer(self):
+        args, kwargs = self.bot.edit_message_text.call_args
+        return kwargs['rich_message'].markdown if 'rich_message' in kwargs else args[0]
+
     def test_query_never_generates_and_results_are_personal_uncached(self):
         token = self.query()
         self.client.models.generate_content.assert_not_called()
@@ -61,11 +73,15 @@ class TestInlineBot(unittest.TestCase):
         self.assertEqual(request['model'], 'gemini-flash-lite-latest')
         self.assertEqual((request['model'], request['contents']), (INLINE_MODEL, 'Question'))
         self.assertEqual(request['config'].response_modalities, ['TEXT'])
-        self.assertEqual(len(request['config'].tools), 1)
-        self.assertIsNotNone(request['config'].tools[0].google_search)
+        self.assertEqual(len(request['config'].tools), 2)
+        self.assertIsNotNone(request['config'].tools[0].url_context)
+        self.assertIsNotNone(request['config'].tools[1].google_search)
+        config = request['config'].model_dump(exclude_none=True)
+        self.assertNotIn('system_instruction', config)
+        self.assertNotIn('max_output_tokens', config)
         self.assertNotIn('PRIVATE', str(request))
         self.assertEqual(self.bot.edit_message_text.call_args.kwargs['inline_message_id'], 'inline-message')
-        self.assertIn('Answer', self.bot.edit_message_text.call_args.args[0])
+        self.assertIn('Answer', self.last_answer())
         with self.sessions() as session:
             self.assertEqual(session.query(UsageRecord).one().operation, 'inline')
             self.assertEqual(crud.get_chat_session(session, 123).history_json, 'PRIVATE HISTORY')
@@ -111,9 +127,10 @@ class TestInlineBot(unittest.TestCase):
         self.assertEqual(self.panel.jobs[token]['state'], 'pending')
         self.client.models.generate_content.side_effect = None
         self.chosen(token)
-        self.assertIn('Answer', self.bot.edit_message_text.call_args.args[0])
+        self.assertIn('Answer', self.last_answer())
 
     def test_long_unicode_output_fits_inline_message_limit(self):
+        self.use_plain_fallback()
         self.client.models.generate_content.return_value.text = '😀' * 5000
         self.chosen(self.query('Вопрос ' * 200))
         text = self.bot.edit_message_text.call_args.args[0]
@@ -122,6 +139,7 @@ class TestInlineBot(unittest.TestCase):
         self.assertIn('сокращён', text)
 
     def test_grounded_sources_are_linked_at_end_and_reused_without_regeneration(self):
+        self.use_plain_fallback()
         self.client.models.generate_content.return_value = genai_types.GenerateContentResponse(
             candidates=[genai_types.Candidate(
                 content=genai_types.Content(parts=[genai_types.Part(text='Ответ 😀')]),
@@ -158,6 +176,7 @@ class TestInlineBot(unittest.TestCase):
         self.assertEqual(self.bot.edit_message_text.call_args.kwargs['entities'], kwargs['entities'])
 
     def test_sources_survive_long_answer_and_urls_are_not_shortened(self):
+        self.use_plain_fallback()
         long_url = 'https://example.org/' + 'a' * 6000
         self.client.models.generate_content.return_value = SimpleNamespace(
             text='😀' * 5000, usage_metadata=None,
@@ -178,6 +197,7 @@ class TestInlineBot(unittest.TestCase):
             self.assertLessEqual(entity.offset + entity.length, len(text.encode('utf-16-le')) // 2)
 
     def test_missing_grounding_metadata_does_not_add_sources(self):
+        self.use_plain_fallback()
         for candidates in (None, [], [SimpleNamespace(grounding_metadata=None)],
                            [SimpleNamespace(grounding_metadata=SimpleNamespace(grounding_chunks=[]))]):
             with self.subTest(candidates=candidates):
@@ -189,6 +209,7 @@ class TestInlineBot(unittest.TestCase):
                 self.assertEqual(self.bot.edit_message_text.call_args.kwargs['entities'], [])
 
     def test_many_sources_fit_message_limit(self):
+        self.use_plain_fallback()
         self.client.models.generate_content.return_value = SimpleNamespace(
             text='😀' * 5000, usage_metadata=None,
             candidates=[SimpleNamespace(grounding_metadata=SimpleNamespace(grounding_chunks=[
@@ -203,6 +224,75 @@ class TestInlineBot(unittest.TestCase):
         self.assertGreater(len(entities), 1)
         self.assertLess(len(entities), 100)
         self.assertEqual(entities[-1].offset + entities[-1].length, len(text.encode('utf-16-le')) // 2)
+
+    def test_rich_response_keeps_markdown_and_shared_source_links(self):
+        answer = '# Погода\n\n**Температура:** +2 °C\n\n| Город | °C |\n|---|---|\n| СПб | 2 |\n\n```python\nprint(2)\n```'
+        self.client.models.generate_content.return_value = SimpleNamespace(
+            text=answer, usage_metadata=None,
+            candidates=[SimpleNamespace(grounding_metadata=SimpleNamespace(grounding_chunks=[
+                SimpleNamespace(web=SimpleNamespace(title='Погода [СПб]', uri='https://example.org/weather')),
+            ]))],
+        )
+        token = self.query('Как **погода**?')
+        self.chosen(token)
+        self.bot.edit_message_text.assert_called_once()
+        kwargs = self.bot.edit_message_text.call_args.kwargs
+        self.assertEqual(kwargs['inline_message_id'], 'inline-message')
+        expected = ('Как \\*\\*погода\\*\\*?\n\n' + answer
+                    + source_links_markdown([('Погода [СПб]', 'https://example.org/weather')]))
+        self.assertEqual(kwargs['rich_message'].markdown, expected)
+        self.assertNotIn('parse_mode', kwargs)
+        self.assertNotIn('entities', kwargs)
+        self.assertEqual(kwargs['reply_markup'].keyboard, [])
+        self.chosen(token, message_id='second-message')
+        self.client.models.generate_content.assert_called_once()
+        self.assertEqual(self.last_answer(), expected)
+
+    def test_rich_response_keeps_more_than_plain_text_limit(self):
+        self.client.models.generate_content.return_value.text = '**' + 'a' * 7000 + '**'
+        self.chosen(self.query())
+        markdown = self.last_answer()
+        self.assertIn('a' * 7000, markdown)
+        self.assertNotIn('сокращён', markdown)
+
+    def test_long_rich_response_closes_code_and_keeps_sources(self):
+        self.client.models.generate_content.return_value = SimpleNamespace(
+            text='```python\n' + 'print(123)\n' * 4000 + '```', usage_metadata=None,
+            candidates=[SimpleNamespace(grounding_metadata=SimpleNamespace(grounding_chunks=[
+                SimpleNamespace(web=SimpleNamespace(title='Документация', uri='https://example.org/docs')),
+            ]))],
+        )
+        self.chosen(self.query())
+        markdown = self.last_answer()
+        self.assertLessEqual(len(markdown), 16000)
+        self.assertIn('сокращён', markdown)
+        self.assertEqual(markdown.count('```'), 2)
+        self.assertTrue(markdown.endswith('[Документация](https://example.org/docs)'))
+
+    def test_unchanged_rich_answer_does_not_downgrade_to_plain_text(self):
+        self.bot.edit_message_text.side_effect = ApiTelegramException(
+            'editMessageText', None,
+            {'error_code': 400, 'description': 'Bad Request: message is not modified'},
+        )
+        self.chosen(self.query())
+        self.bot.edit_message_text.assert_called_once()
+        self.assertIn('rich_message', self.bot.edit_message_text.call_args.kwargs)
+
+    def test_sdk_serializes_rich_inline_edit_without_text_or_parse_mode(self):
+        import json
+        from telebot import TeleBot
+
+        token = self.query()
+        self.panel.bot = TeleBot('123:TEST', threaded=False)
+        self.addCleanup(self.panel.bot.stop_bot)
+        with patch('telebot.apihelper._make_request', return_value=True) as request:
+            self.chosen(token)
+        request.assert_called_once()
+        payload = request.call_args.kwargs['params']
+        self.assertEqual(payload['inline_message_id'], 'inline-message')
+        self.assertEqual(json.loads(payload['rich_message']), {'markdown': 'Question\n\nAnswer'})
+        self.assertNotIn('text', payload)
+        self.assertNotIn('parse_mode', payload)
 
     def test_jobs_expire_and_cache_is_bounded(self):
         self.panel.MAX_JOBS = 2
@@ -276,5 +366,5 @@ class TestInlineBot(unittest.TestCase):
         self.client.models.generate_content.assert_called_once()
         edit.assert_called_once()
         self.assertEqual(edit.call_args.kwargs['inline_message_id'], 'inline-message')
-        self.assertEqual(edit.call_args.args[0], 'Привет\n\nAnswer')
+        self.assertEqual(edit.call_args.kwargs['rich_message'].markdown, 'Привет\n\nAnswer')
         self.assertEqual(edit.call_args.kwargs['reply_markup'].keyboard, [])

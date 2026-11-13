@@ -1,10 +1,39 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from utils import markdown_to_text, send_rich_response, split_plain_text
+from utils import (
+    grounding_sources,
+    markdown_to_text,
+    send_rich_response,
+    source_links_markdown,
+    split_plain_text,
+)
 
 
 class TestPlainResponseRegressions(unittest.TestCase):
+    def test_shared_grounding_sources_skip_non_web_chunks_and_duplicates(self):
+        response = SimpleNamespace(candidates=[SimpleNamespace(grounding_metadata=SimpleNamespace(
+            grounding_chunks=[
+                SimpleNamespace(web=None),
+                SimpleNamespace(web=SimpleNamespace(title='Нет ссылки', uri=None)),
+                SimpleNamespace(web=SimpleNamespace(title='Источник', uri='https://example.org/')),
+                SimpleNamespace(web=SimpleNamespace(title='Дубликат', uri='https://example.org/')),
+                SimpleNamespace(web=SimpleNamespace(title=None, uri='https://example.net/')),
+            ],
+        ))])
+        self.assertEqual(grounding_sources(response), [
+            ('Источник', 'https://example.org/'), ('https://example.net/', 'https://example.net/'),
+        ])
+        self.assertEqual(grounding_sources(SimpleNamespace()), [])
+
+    def test_source_links_escape_titles_and_keep_parentheses_in_destinations(self):
+        footer = source_links_markdown([('Источник [СПб] **сейчас**', 'https://example.org/a(b)?q=1&x=2')])
+        self.assertIn(r'[Источник \[СПб\] \*\*сейчас\*\*]', footer)
+        self.assertIn('(https://example.org/a%28b%29?q=1&x=2)', footer)
+        self.assertIn('Источник [СПб] **сейчас**', markdown_to_text(footer))
+        self.assertEqual(source_links_markdown([]), '')
+
     def test_plain_download_and_fallback_keep_fenced_code_indentation_and_blank_lines(self):
         code = "    first = 1\n\n\n    second = first * 2"
         self.assertEqual(markdown_to_text(f"```python\n{code}\n```"), code)
